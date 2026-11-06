@@ -7,15 +7,17 @@ serta mengirimkan lamaran via email (Gmail API) atau portal apply (Playwright di
 Local Runner).
 
 Sistem dirancang untuk tim internal 2 orang (target ~10 pengguna dalam 3 bulan),
-tanpa biaya infrastruktur ($0), berjalan di Oracle Always Free VM + laptop tim,
-dan **data CV kandidat tidak pernah dikirim ke penyedia AI komersial**.
+tanpa biaya infrastruktur ($0), berjalan di Oracle Always Free VM (4 OCPU / 24 GB RAM)
++ laptop tim, dan **data CV kandidat tidak pernah dikirim ke penyedia AI komersial**.
 
 ## Prinsip Utama
 
 1. **Manusia adalah otoritas akhir.** Tidak ada lamaran yang dikirim tanpa
-   persetujuan pengguna. Default `PORTAL_AUTO_SUBMIT=false`.
+   persetujuan pengguna. Default `PORTAL_AUTO_SUBMIT=false`. Hasil parsing CV
+   hanya berupa saran yang wajib di-review.
 2. **Template-first, rules-first, AI-last.** Sistem berjalan 100% tanpa LLM.
-   AI (Ollama lokal CPU-only) bersifat opsional hanya untuk menghasilkan teks.
+   AI internal (Ollama CPU-only `qwen3:4b`) dipakai sebagai akselerator opsional
+   untuk parsing CV (memerlukan persetujuan eksplisit) dan variasi teks lamaran.
 3. **Data kandidat tidak keluar ke pihak ketiga.** Tidak ada API key AI
    komersial. Kredensial akun platform (LinkedIn, Glints, dll.) **tidak pernah
    disimpan di server**.
@@ -72,7 +74,7 @@ workers/
   sender/        Pengiriman email (Gmail API) dan sinkronisasi reply
 
 packages/
-  ai/            Adapter Ollama lokal (CPU-only, opsional)
+  ai/            Adapter Ollama lokal (qwen3:4b, CPU-only) untuk parsing CV (consent) dan draf
   matching/      Rules-based matching profil-lowongan (40/25/15/10/10)
   pdf/           Renderer CV PDF (@react-pdf/renderer)
   email/         Adapter Gmail API (OAuth)

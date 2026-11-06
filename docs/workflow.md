@@ -30,32 +30,42 @@ TAHAP 4 - Eksekusi Pengiriman
 Sebelum tahap 1, setiap user menyelesaikan onboarding satu kali:
 
 ```text
-Register/login -> isi data diri (format lamaran kerja) -> CV otomatis
--> pilih interest role -> pilih platform yang diikuti
--> (opsional) hubungkan Gmail -> (opsional) login manual platform di Local Runner
+Register/login
+  -> pilih cara isi profil:
+       a. Manual per bagian, ATAU
+       b. Unggah CV lama (PDF/DOCX) + centang consent AI
+          -> cv.parse (Ollama qwen3:4b) -> saran di cv_parse_suggestions
+          -> user review (terima/edit/tolak) -> masuk ke profil
+          (jika Ollama offline/gagal/PDF scan -> langsung ke form manual)
+  -> render CV PDF dari template
+  -> pilih interest role -> pilih platform yang diikuti
+  -> (opsional) hubungkan Gmail -> (opsional) login manual platform di Local Runner
 ```
 
 ## Prinsip yang Tidak Berubah
 
-1. **LLM tidak pernah "mengirim" lamaran.** LLM hanya menghasilkan teks. Yang
-   mengirim adalah adapter: Gmail API untuk email, Playwright untuk portal.
+1. **LLM tidak pernah "mengirim" lamaran.** LLM hanya menghasilkan teks atau
+   mengekstrak saran field. Yang mengirim adalah adapter: Gmail API untuk email,
+   Playwright untuk portal.
 2. **Scraping tidak memakai akun.** Tahap 1 berjalan sebagai guest. Akun pribadi
    tidak pernah dipakai untuk mengumpulkan lowongan.
 3. **Password platform tidak disimpan di server.** Sesi login platform hanya ada
    di profil browser lokal milik user di Local Runner.
-4. **Data kandidat tidak dikirim ke provider AI.** LLM yang dipakai adalah
-   Ollama lokal. Jika mati, sistem jatuh ke template.
-5. **Isi CV hanya dari data user.** Penyesuaian CV per lowongan berupa memilih
-   dan mengurutkan data yang sudah ada, bukan menulis fakta baru.
+4. **Data kandidat tidak dikirim ke provider AI pihak ketiga.** LLM yang dipakai
+   adalah Ollama lokal di VM sendiri, dan pemrosesan CV wajib didahului consent
+   eksplisit. Jika Ollama mati, sistem jatuh ke input manual / template.
+5. **Isi CV akhir hanya dari data user yang sudah diverifikasi.** Hasil parsing
+   CV lama berstatus saran sampai disetujui user; penyesuaian CV per lowongan
+   berupa memilih dan mengurutkan data yang sudah ada, bukan menulis fakta baru.
 
 ## Komponen yang Terlibat
 
 | Komponen | Lokasi | Peran |
 |---|---|---|
-| Web | VM Oracle | UI, API, onboarding, daftar lowongan, antrean |
-| Worker | VM Oracle | Ingest, matching, persiapan antrean, kirim email |
+| Web | VM Oracle (4 OCPU / 24 GB) | UI, API, onboarding, daftar lowongan, antrean |
+| Worker | VM Oracle | Ingest, matching, `cv.parse`, persiapan antrean, kirim email |
 | PostgreSQL | VM Oracle | Data, snapshot, antrean (pg-boss) |
-| Ollama (opsional) | VM Oracle | Menyusun teks lamaran |
+| Ollama (`qwen3:4b`) | VM Oracle (container internal) | Parsing CV opsional (butuh consent) dan menyusun teks lamaran |
 | **Local Runner** | Laptop/PC anggota tim | Scraping guest (tahap 1) dan isi form portal (tahap 4b) |
 
 Local Runner berjalan di jaringan rumah/kantor (IP residensial), bukan di VM,
@@ -190,7 +200,8 @@ untuk setiap applications(status = queued), satu per satu:
 
 ### Aturan
 
-- LLM hanya dipakai di tahap ini, dan hanya Ollama lokal.
+- LLM hanya dipakai di dua tempat: `cv.parse` saat onboarding (butuh consent)
+  dan `application.prepare` di tahap ini, selalu melalui Ollama lokal.
 - Jika Ollama mati/timeout 3x, teks dibuat dari template (`drafts.source =
   template`).
 - Pertanyaan sensitif (ekspektasi gaji, kesediaan relokasi, tahun pengalaman

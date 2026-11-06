@@ -22,17 +22,17 @@ Baca dengan urutan ini:
 | 6 | [sources.md](sources.md) | Aturan scraping guest dan adapter platform |
 | 7 | [setup.md](setup.md) | Cara menjalankan, Local Runner, dan deploy |
 | 8 | [roadmap.md](roadmap.md) | Urutan fase pengembangan (Phase 0-7) |
-| 9 | [evaluation.md](evaluation.md) | Cara mengukur kualitas |
-| 10 | [ai-training.md](ai-training.md) | Cara training, jika diperlukan (Phase 7) |
+| 9 | [evaluation.md](evaluation.md) | Cara mengukur kualitas (draf & CV parsing) |
+| 10 | [ai-training.md](ai-training.md) | Optimasi prompt/Modelfile, Qwen3, dan panduan training |
 
 ## 2. Mental Model Arsitektur
 
 ```text
-VM Oracle (Always Free, 2 OCPU / 12 GB)
+VM Oracle (Always Free, 4 OCPU / 24 GB)
   web       Next.js  -> UI + API + endpoint Runner
-  worker    pg-boss  -> matching, prepare draft, email
+  worker    pg-boss  -> matching, cv.parse, prepare draft, email, cv.cleanup
   db        Postgres -> data + queue + pgvector
-  ollama    opsional -> draft enhancement (CPU)
+  ollama    qwen3:4b -> CV parsing (opt-in + consent) & draft (CPU, mem_limit 5g)
 
 Laptop/PC Tim (IP residensial)
   runner    Playwright -> scraping guest (Stage 1) + portal apply (Stage 4b)
@@ -42,11 +42,11 @@ Akses masuk lewat Cloudflare Tunnel. Tidak ada port terbuka.
 
 Prinsip yang harus selalu diingat:
 
-1. **Template-first, rules-first, AI-last.** Fitur inti jalan tanpa LLM; LLM hanya menghasilkan teks, tidak pernah mengirim lamaran.
-2. **Data kandidat tidak keluar ke provider AI.** Tidak ada API LLM komersial.
+1. **Template-first, rules-first, AI-last.** Fitur inti jalan tanpa LLM; LLM hanya mengekstrak saran CV (butuh consent) dan menghasilkan teks, tidak pernah mengirim lamaran.
+2. **Data kandidat tidak keluar ke provider AI pihak ketiga.** Tidak ada API LLM komersial; pemrosesan CV di Ollama lokal wajib didahului consent terversi (`user_consents`).
 3. **Lowongan adalah snapshot H-1**, dikumpulkan lewat scraping guest oleh Local Runner (maks 10/platform/hari).
 4. **Tidak menyimpan password/cookie platform di server.** Login portal dilakukan manual di profil browser lokal.
-5. **Manusia adalah otoritas akhir.** Email butuh approve; portal apply berhenti sebelum tombol Submit secara default (`PORTAL_AUTO_SUBMIT=false`).
+5. **Manusia adalah otoritas akhir.** Hasil parsing CV berstatus saran sampai disetujui user; email butuh approve; portal apply berhenti sebelum tombol Submit secara default (`PORTAL_AUTO_SUBMIT=false`).
 
 ## 3. Hari Pertama: Checklist 30 Menit
 
@@ -57,7 +57,8 @@ git clone <repo>
 cd Lamar_Kerja_AI
 cp .env.example .env
 pnpm install
-docker compose -f infrastructure/docker-compose.yml up -d db
+docker compose -f infrastructure/docker-compose.yml up -d db ollama
+docker compose -f infrastructure/docker-compose.yml exec ollama ollama pull qwen3:4b
 pnpm db:migrate
 pnpm db:seed          # data contoh, bukan data produksi
 pnpm dev              # http://localhost:3000
@@ -67,10 +68,11 @@ pnpm worker:dev       # terminal terpisah
 Verifikasi:
 
 - [ ] Bisa register dan login.
-- [ ] Bisa mengisi profil dan mengunduh CV PDF.
-- [ ] Bisa melihat daftar lowongan contoh.
-- [ ] Bisa membuat draft lamaran.
-- [ ] `AI_ENABLED=false` dan tidak ada error.
+- [ ] Bisa mengisi profil manual **dan** mengunggah CV contoh (dengan consent) lalu me-review saran.
+- [ ] Tanpa mencentang consent, endpoint parsing menolak dengan `403`.
+- [ ] Saat container `ollama` dihentikan, onboarding tetap jalan lewat form manual dan draf memakai template (`AI_ENABLED=false` juga tetap bekerja).
+- [ ] Bisa mengunduh CV PDF dari template.
+- [ ] Bisa melihat daftar lowongan contoh dan membuat draft lamaran.
 - [ ] Worker berjalan dan memproses satu task contoh.
 
 > Catatan: sebagian perintah di atas baru tersedia setelah Phase 0 selesai.
@@ -91,8 +93,10 @@ Verifikasi:
 | Renderer PDF | `packages/pdf` |
 | Skor kecocokan | `packages/matching` |
 | Worker discovery / ingest | `workers/src/discovery` |
+| Worker CV parsing (`cv.parse`, `cv.cleanup`) | `workers/src/cv-parser` |
 | Worker draft (`application.prepare`) | `workers/src/generator` |
 | Worker email (`email.send`) | `workers/src/sender` |
+| Adapter Ollama & schema ekstraksi | `packages/ai` |
 | Schema database | `packages/db/schema` |
 | Migration | `packages/db/migrations` |
 | Prompt | `prompts/` |
@@ -164,29 +168,41 @@ Hal yang perlu diperiksa saat eksplorasi:
 
 ## 7. Eksplorasi AI
 
-AI bersifat opsional. Untuk bereksperimen:
+Service `ollama` (`qwen3:4b`) berjalan sebagai bagian dari `docker compose` untuk
+dua task: **ekstraksi CV** (`cv.parse`, Phase 1/6) dan **draf lamaran**
+(`application.prepare`, Phase 4).
 
 ```bash
-ollama pull qwen3:4b
-ollama serve
+docker compose -f infrastructure/docker-compose.yml up -d ollama
+docker compose -f infrastructure/docker-compose.yml exec ollama ollama pull qwen3:4b
 ```
 
-Lalu set:
+Konfigurasi di `.env`:
 
 ```env
 AI_ENABLED=true
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:4b
+OLLAMA_NUM_CTX=8192
+OLLAMA_TIMEOUT_MS=180000
+CV_AI_CONSENT_VERSION=2026-11-06.v1
 ```
 
-Yang bisa dibandingkan:
+Yang perlu diuji:
 
-- Draft template vs draft LLM untuk lowongan yang sama.
-- Pengaruh `num_ctx` terhadap deskripsi lowongan panjang.
-- Perilaku saat Ollama dimatikan di tengah proses (harus fallback, bukan error).
+- **CV parsing**: unggah CV sintetis → pastikan `think: false` dipakai, hasil
+  masuk `cv_parse_suggestions` (bukan langsung ke `profiles`), dan setiap field
+  punya `confidence` + `source_snippet`.
+- **Consent enforcement**: panggil endpoint parse tanpa consent atau dengan
+  versi lama → harus `403`.
+- **Draf template vs LLM**: bandingkan untuk lowongan yang sama.
+- **Fallback**: hentikan container `ollama` di tengah proses → `cv.parse` harus
+  berakhir `failed` tanpa memblokir form manual, dan `application.prepare` harus
+  jatuh ke template.
 
-Gunakan [evaluation.md](evaluation.md) untuk menilai, jangan hanya mengandalkan
-kesan.
+Gunakan [evaluation.md](evaluation.md) dan [ai-training.md](ai-training.md) untuk
+menilai kualitas (F1 per field, hallucination rate, factuality), jangan hanya
+mengandalkan kesan.
 
 ## 8. Eksplorasi Sumber Lowongan & Local Runner
 
@@ -291,16 +307,16 @@ Tidak perlu ADR untuk perbaikan bug atau perubahan UI kecil.
 | 1 | Setup lokal, jalankan web dan worker, coba alur wajib |
 | 2 | Baca workflow + arsitektur + decisions + privacy |
 | 3 | Eksplorasi kode dengan codebase-memory |
-| 4 | Ubah satu hal kecil di UI profil dan buka PR |
-| 5 | Pelajari schema database (`packages/db/schema`) dan migration |
-| 6 | Pelajari Local Runner (`apps/runner`) dan adapter scraping guest |
-| 7 | Pelajari normalizer, dedupe, dan worker discovery |
+| 4 | Ubah satu hal kecil di UI profil/review CV dan buka PR (Phase 1) |
+| 5 | Pelajari schema database (`packages/db/schema`), consent, dan migration |
+| 6 | Pelajari pipeline `cv.parse`, `packages/ai`, dan fallback manual (Phase 1) |
+| 7 | Pelajari Local Runner (`apps/runner`), scraping guest, dan normalizer (Phase 2) |
 | 8 | Pelajari rules matching dan breakdown skor (Phase 3) |
 | 9 | Pelajari template CV dan renderer PDF (`packages/pdf`) |
 | 10 | Pelajari draft generator, `portal_answers`, dan alur review (Phase 4) |
 | 11 | Pelajari adapter email (Gmail API) dan tracking (Phase 5) |
-| 12 | Pelajari adapter portal apply Playwright (Phase 6) |
-| 13 | Jalankan eval set dan eksplorasi Ollama CPU-only (Phase 7, opsional) |
+| 12 | Pelajari adapter portal apply Playwright + CV parsing v2 (Phase 6) |
+| 13 | Jalankan eval set (`draft` & `cv`) dan baca [ai-training.md](ai-training.md) |
 | 14 | Ambil satu task mandiri dari [roadmap.md](roadmap.md) |
 
 ## 12. FAQ dan Troubleshooting

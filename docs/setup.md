@@ -10,23 +10,23 @@ Queue:          pg-boss (tanpa Redis)
 PDF:            @react-pdf/renderer
 Scraping:       Playwright (guest) di Local Runner
 Apply:          Gmail API + Playwright (portal) di Local Runner
-AI (opsional):  Ollama + qwen3:4b (CPU-only)
+AI:             Ollama + qwen3:4b (CPU-only, Docker container internal)
 Email:          Gmail API (OAuth)
 Auth:           Auth.js, credentials
-Deploy:         Oracle Cloud Always Free VM + Docker Compose + Cloudflare Tunnel
+Deploy:         Oracle Cloud Always Free VM (4 OCPU / 24 GB RAM) + Docker Compose + Cloudflare Tunnel
 Runner:         Laptop/PC anggota tim (Windows/macOS)
 ```
 
-Tidak ada Redis, tidak ada API LLM komersial, dan tidak ada layanan yang
-menerima data CV kandidat.
+Tidak ada Redis, tidak ada API LLM komersial pihak ketiga, dan tidak ada
+layanan luar yang menerima data CV kandidat.
 
 ## Prasyarat
 
 - Node.js 22 dan pnpm.
-- Docker Desktop (untuk PostgreSQL lokal) atau PostgreSQL 16 terpasang langsung.
+- Docker Desktop (untuk PostgreSQL & Ollama lokal) atau PostgreSQL 16 terpasang langsung.
 - Git.
 - Playwright + Chromium untuk Local Runner (scraping & portal apply).
-- Opsional: Ollama, hanya jika ingin mengaktifkan draft berbasis LLM.
+- Ollama (via Docker compose atau instalasi lokal host).
 
 Anggota tim baru: mulai dari [team-onboarding.md](team-onboarding.md) untuk
 checklist hari pertama, access matrix produksi, dan alur kontribusi.
@@ -38,7 +38,8 @@ git clone <repo>
 cd Lamar_Kerja_AI
 cp .env.example .env
 pnpm install
-docker compose -f infrastructure/docker-compose.yml up -d db
+docker compose -f infrastructure/docker-compose.yml up -d db ollama
+docker compose -f infrastructure/docker-compose.yml exec ollama ollama pull qwen3:4b
 pnpm db:migrate
 pnpm dev
 ```
@@ -64,19 +65,50 @@ pnpm runner:dev
 Runner berjalan terpisah dari web dan worker. Detail setup ada di bagian
 [Local Runner](#local-runner) di bawah.
 
-### Menjalankan Ollama (opsional)
+### Menjalankan Ollama di Docker
 
-```bash
-ollama pull qwen3:4b
-ollama serve
+Ollama dijalankan sebagai container resmi di dalam `docker-compose`:
+
+```yaml
+  ollama:
+    image: ollama/ollama:latest
+    container_name: lamarkerja_ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_DEBUG=false
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 5G
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 ```
 
-Lalu set `AI_ENABLED=true` di `.env`. Jika Ollama tidak berjalan, biarkan
-`AI_ENABLED=false`; seluruh fitur inti tetap bekerja.
+Tarik model `qwen3:4b` sekali di awal:
 
-Untuk menyesuaikan model (prompt, dataset, fine-tune, export ke GGUF), lihat
-[ai-training.md](ai-training.md). Untuk mengukur apakah model baru lebih baik,
-gunakan [evaluation.md](evaluation.md).
+```bash
+docker compose -f infrastructure/docker-compose.yml exec ollama ollama pull qwen3:4b
+```
+
+Jika Ollama dimatikan atau offline, seluruh aplikasi tetap berjalan normal:
+- Parsing CV otomatis dilewati dan user mengisi form profil secara manual.
+- Draf surat lamaran digenerate menggunakan generator template bawaan.
+
+Untuk panduan melatih atau menyesuaikan model AI (`Modelfile`, Qwen3 settings,
+evaluasi, fine-tune LoRA/QLoRA), lihat [ai-training.md](ai-training.md) dan
+[evaluation.md](evaluation.md).
 
 ## Environment Variable
 
@@ -124,14 +156,18 @@ PORTAL_AUTO_SUBMIT=false
 RUNNER_SERVER_URL=http://localhost:3000
 ```
 
-### AI (Opsional)
+### AI (Ollama Internal)
 
 ```env
-AI_ENABLED=false
+# Aktifkan integrasi Ollama (default true di docker compose)
+AI_ENABLED=true
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:4b
 OLLAMA_NUM_CTX=8192
-OLLAMA_TIMEOUT_MS=120000
+OLLAMA_TIMEOUT_MS=180000
+
+# Versi persetujuan privasi AI untuk CV (wajib cocok dengan user_consents)
+CV_AI_CONSENT_VERSION=2026-11-06.v1
 ```
 
 ### Gmail OAuth
@@ -253,6 +289,12 @@ Buka Task Scheduler, buat task baru:
 2. Validasi zod di API dan form.
 3. Template CV dan renderer PDF (`@react-pdf/renderer`).
 4. Preview dan download CV PDF tanpa AI.
+5. Upload file CV lama (PDF/DOCX) dengan retensi 30 hari di disk lokal `/data/cv`.
+6. Ekstraksi teks lokal (`pdfjs-dist` / `mammoth`) + parsing CV opsional via
+   Ollama (`cv.parse`) dengan persetujuan eksplisit (`user_consents`).
+7. Tampilan review diff hasil parsing (accept/reject per field) sebelum masuk profil.
+8. Fallback penuh: jika Ollama offline/timeout atau file PDF scan, alur otomatis
+   beralih ke input manual tanpa memblokir onboarding.
 
 ### Phase 2: Tahap 1 dan 2 - Scraping Guest dan Pemilihan
 
@@ -287,10 +329,11 @@ Buka Task Scheduler, buat task baru:
 2. Adapter portal apply untuk Glints, Jobstreet, dan LinkedIn Easy Apply.
 3. Pengisian form otomatis dan berhenti sebelum tombol Submit (`PORTAL_AUTO_SUBMIT=false`).
 4. Penanganan CAPTCHA/verifikasi dan pertanyaan tak dikenal (`needs_user`).
+5. Peningkatan CV Parsing v2 (section-wise chunking, confidence score, source snippet).
 
 ### Phase 7: Peningkatan Opsional
 
-1. Adapter Ollama (`qwen3:4b`) di `packages/ai` dan toggle `AI_ENABLED`.
+1. Toggle `AI_ENABLED` per environment dan kill switch AI.
 2. Eval set, validasi JSON, retry, dan fallback otomatis ke template.
 3. Adapter tambahan (Glassdoor best-effort, ATS publik HTTP).
 4. Semantic matching (`pgvector`) dan fine-tune embedding bila syarat terpenuhi.
@@ -322,13 +365,17 @@ Aturan:
 
 ## Deploy ke Oracle Cloud
 
-1. Buat VM Ampere A1 (Always Free): 2 OCPU, 12 GB RAM, Ubuntu 24.04.
+1. Buat VM Ampere A1 (Always Free): **4 OCPU, 24 GB RAM**, Ubuntu 24.04 (kuota
+   maksimum gratis).
 2. Install Docker dan Docker Compose.
 3. Clone repository, salin `.env`, isi secret.
 4. Jalankan `docker compose up -d`.
-5. Pasang Cloudflare Tunnel, arahkan ke service `caddy` (port 80 internal).
-6. Aktifkan backup harian (`infrastructure/backup.sh`) lewat cron.
-7. Uji restore dari backup sebelum dianggap selesai.
+5. Tarik model qwen3:4b di container ollama:
+   `docker compose exec ollama ollama pull qwen3:4b`
+6. Pasang Cloudflare Tunnel, arahkan ke service `caddy` (port 80 internal).
+7. Aktifkan backup harian (`infrastructure/backup.sh`) dan cleanup CV
+   (`cv.cleanup`) lewat cron.
+8. Uji restore dari backup sebelum dianggap selesai.
 
 Tidak ada port yang dibuka ke internet; akses masuk melalui tunnel.
 
@@ -346,4 +393,8 @@ Tidak ada port yang dibuka ke internet; akses masuk melalui tunnel.
 - [ ] Scraping berhenti saat muncul login wall/CAPTCHA.
 - [ ] `PORTAL_AUTO_SUBMIT=false` tetap default.
 - [ ] Adapter portal tidak menyimpan password/cookie ke server.
+- [ ] Parsing CV membutuhkan consent aktif dan menolak jika tanpa consent (403).
+- [ ] Saran parsing CV tidak langsung menimpa data profil (harus ada review user).
+- [ ] Fallback CV parsing ke input manual bekerja saat Ollama offline.
+- [ ] Retensi file CV 30 hari berjalan dan dibersihkan otomatis.
 - [ ] Backup terenkripsi dan restore sudah diverifikasi.

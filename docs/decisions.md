@@ -9,17 +9,23 @@ Tanggal awal pencatatan: 6 November 2026.
 
 ## ADR-001: Satu VM untuk seluruh layanan
 
-**Status:** Diterima
+**Status:** Diterima (Diperbarui oleh ADR-024)
 
-**Konteks:** Target 10 user dalam 3 bulan, tanpa GPU, dan harus gratis.
+**Konteks:** Target 10 user dalam 3 bulan, tanpa GPU, dan harus gratis. Dengan
+diaktifkannya Ollama `qwen3:4b` untuk parsing CV opsional dan draft lamaran,
+kebutuhan memori dan CPU bertambah.
 
 **Keputusan:** Web, worker, PostgreSQL, dan Ollama berjalan di satu Oracle Cloud
-Always Free VM (ARM, 2 OCPU / 12 GB RAM).
+Always Free VM (Ampere A1 ARM, **4 OCPU / 24 GB RAM** — kuota maksimum Always
+Free).
 
 **Konsekuensi:**
 
-- Biaya $0 dan satu titik backup.
-- Tidak ada horizontal scaling; cukup untuk beban saat ini.
+- Biaya tetap $0 dan satu titik backup.
+- Alokasi resource: Next.js (~1-2 GB, 0.5 OCPU), PostgreSQL (~3-4 GB, 0.5 OCPU),
+  Ollama `qwen3:4b` (~4-5 GB, 1.5 OCPU), sisanya untuk OS, worker, dan buffer.
+- Tidak ada horizontal scaling; cukup untuk beban 10 user dengan antrean
+  sekuensial (`OLLAMA_NUM_PARALLEL=1`).
 - Jika user bertambah, worker dan Ollama dapat dipindah ke mesin terpisah tanpa
   mengubah kode aplikasi (hanya `OLLAMA_BASE_URL` dan antrean).
 
@@ -79,17 +85,24 @@ habis oleh BullMQ.
 
 ## ADR-005: Template-first, rules-first, AI-last
 
-**Status:** Diterima
+**Status:** Diterima (Diperbarui oleh ADR-024)
 
-**Konteks:** Data kandidat tidak boleh keluar ke provider AI, dan tidak ada GPU.
+**Konteks:** Data kandidat tidak boleh keluar ke provider AI eksternal, dan
+tidak ada GPU.
 
-**Keputusan:** Seluruh fitur inti harus berjalan dengan `AI_ENABLED=false`.
+**Keputusan:** Seluruh fitur inti harus tetap berjalan saat `AI_ENABLED=false`
+atau ketika Ollama sedang mati/down. LLM (Ollama lokal `qwen3:4b`) hanya
+dipakai sebagai akselerator opsional untuk (1) mengekstrak saran profil dari CV
+yang diunggah user setelah consent eksplisit, dan (2) menyusun variasi teks
+lamaran.
 
 **Konsekuensi:**
 
-- AI tidak pernah menjadi dependency pada build, migration, atau test.
-- Kualitas dasar lebih konsisten dan bisa dijelaskan.
-- LLM hanya menambah variasi pada draft, bukan menggantikan logika inti.
+- AI tidak pernah menjadi hard dependency pada build, migration, test, maupun
+  alur utama onboarding/melamar.
+- Jika Ollama down, CV parsing dilewati dan user mengisi profil secara manual;
+  pembuatan draft jatuh ke template.
+- Kualitas dasar tetap konsisten dan bisa dijelaskan.
 
 ---
 
@@ -100,12 +113,17 @@ habis oleh BullMQ.
 **Konteks:** `README.md` melarang AI mengarang pengalaman, pendidikan, atau
 sertifikasi.
 
-**Keputusan:** CV dirender dari data terstruktur dengan `@react-pdf/renderer`.
-LLM tidak pernah menyusun isi CV.
+**Keputusan:** CV akhir yang dikirim ke perusahaan (`resumes`) selalu dirender
+dari data profil terstruktur yang sudah diverifikasi user dengan
+`@react-pdf/renderer`. LLM tidak pernah menyusun dokumen CV akhir; pada fitur
+CV parsing (ADR-024), LLM hanya mengekstrak **saran field** dari file CV lama
+(`uploaded_cvs`) yang wajib di-review user sebelum masuk ke profil.
 
 **Konsekuensi:**
 
-- Nol risiko halusinasi pada dokumen utama.
+- Nol risiko halusinasi pada dokumen CV yang dikirim tanpa sepengetahuan user.
+- Pemisahan tegas antara `uploaded_cvs` (file sumber untuk parsing) dan
+  `resumes` (PDF hasil render template).
 - Desain CV ditentukan oleh template, bukan prompt.
 - Penambahan varian template tidak memerlukan perubahan model AI.
 
@@ -128,39 +146,51 @@ LLM tidak pernah menyusun isi CV.
 
 ---
 
-## ADR-008: Ollama CPU-only dan opsional
+## ADR-008: Ollama CPU-only sebagai service internal dengan fallback penuh
 
-**Status:** Diterima
+**Status:** Diterima (Diperbarui oleh ADR-024)
 
-**Konteks:** Tidak ada GPU lokal. Model 4B pada CPU mampu menghasilkan draft
-pendek dengan kecepatan 3-10 token/detik.
+**Konteks:** Tidak ada GPU lokal. Model 4B pada CPU ARM (4 OCPU) mampu
+mengekstrak JSON singkat dan menghasilkan draft pendek dengan kecepatan
+5-15 token/detik.
 
-**Keputusan:** Gunakan `qwen3:4b` melalui Ollama, dijalankan lewat queue,
-dinonaktifkan secara default.
+**Keputusan:** Gunakan `qwen3:4b` (quantized `Q4_K_M`) melalui container Docker
+`ollama` di VM yang sama, dijalankan lewat queue `pg-boss` dengan
+`OLLAMA_NUM_PARALLEL=1`. Service `ollama` dipasang secara standar di
+`docker-compose`, tetapi fitur pemanggilnya (CV parsing & draft LLM) tetap
+memiliki fallback penuh jika service mati atau `AI_ENABLED=false`.
 
 **Konsekuensi:**
 
-- Satu draft memakan waktu puluhan detik; ini dapat diterima karena async.
-- Butuh `num_ctx=8192` agar deskripsi lowongan tidak terpotong.
-- Kegagalan Ollama tidak boleh terlihat oleh user; sistem jatuh ke template.
+- Satu task ekstraksi atau draft memakan waktu puluhan detik hingga birkaç
+  menit; ini dapat diterima karena berjalan asynchronous di background.
+- Butuh `num_ctx=8192` dan pematikan mode thinking (`/no_think`) untuk tugas
+  ekstraksi agar latensi CPU terjaga.
+- Kegagalan Ollama tidak boleh menghentikan alur user: CV parsing jatuh ke
+  input manual, dan pembuatan draft jatuh ke template.
 
 ---
 
-## ADR-009: Interpretasi privasi - boleh di VM sendiri
+## ADR-009: Interpretasi privasi - boleh di VM sendiri dengan persetujuan
 
-**Status:** Diterima
+**Status:** Diterima (Diperbarui oleh ADR-025)
 
 **Konteks:** Ada tiga kemungkinan interpretasi "data CV tidak keluar ke
-provider".
+provider", serta kebutuhan memproses CV dan profil menggunakan model AI tanpa
+melanggar privasi kandidat.
 
-**Keputusan:** Data boleh diproses di VM yang dikelola sendiri (Oracle), tetapi
-tidak boleh dikirim ke layanan AI komersial mana pun.
+**Keputusan:** Data kandidat (CV dan profil) boleh diproses oleh model AI
+**hanya jika** model tersebut berjalan di infrastruktur yang dikelola sendiri
+(Ollama di VM Oracle proyek) **dan** user telah memberikan persetujuan (consent)
+eksplisit terlebih dahulu. Data tidak boleh dikirim ke layanan AI komersial
+pihak ketiga mana pun.
 
 **Konsekuensi:**
 
-- Gemini, OpenRouter, Cloudflare Workers AI, dan Hugging Face Inference tidak
-  dipakai untuk data kandidat.
-- Oracle Cloud diterima sebagai penyedia infrastruktur.
+- Gemini, OpenAI, Anthropic, OpenRouter, Cloudflare Workers AI, dan Hugging Face
+  Inference tetap dilarang untuk data kandidat.
+- Pemrosesan oleh Ollama internal wajib didahului consent yang tercatat
+  (`user_consents`) dan dapat dicabut kapan saja.
 - Detail ada di [privacy.md](privacy.md).
 
 ---
@@ -211,7 +241,7 @@ terakhir yang tersedia.
 **Status:** Diterima
 
 **Konteks:** Playwright membutuhkan Chromium (~300 MB RAM per instance) yang
-berat untuk VM 12 GB.
+memakan RAM VM yang juga dipakai PostgreSQL dan Ollama.
 
 **Keputusan:** Render CV sebagai React PDF tanpa browser.
 
@@ -398,30 +428,35 @@ meningkat jika password atau cookie disimpan di server.
 
 ---
 
-## ADR-021: LLM hanya menghasilkan teks
+## ADR-021: LLM hanya menghasilkan teks dan ekstraksi terstruktur
 
-**Status:** Diterima
+**Status:** Diterima (Diperbarui oleh ADR-024)
 
-**Konteks:** Kebingungan umum: apakah LLM bisa "mengirim" lamaran. LLM hanya
-bisa menghasilkan teks; yang mengirim adalah adapter (Gmail API, Playwright).
+**Konteks:** Kebingungan umum: apakah LLM bisa "mengirim" lamaran atau langsung
+mengubah profil kandidat. LLM hanya menghasilkan output teks/JSON; yang
+mengubah profil adalah persetujuan user, dan yang mengirim lamaran adalah
+adapter (Gmail API, Playwright).
 
 **Keputusan:**
 
-- LLM hanya dipanggil oleh `application.prepare` untuk menyusun teks:
-  cover letter, subject/body email, pesan reach-out HR, jawaban form.
+- LLM hanya dipanggil di dua titik:
+  1. `cv.parse` (opsional, butuh consent): mengekstrak teks CV lama menjadi
+     saran field JSON (`cv_parse_suggestions`) yang harus di-review user.
+  2. `application.prepare` (opsional): menyusun teks cover letter, subject/body
+     email, pesan reach-out HR, dan jawaban form non-sensitif.
 - Adapter `email.send` dan `portal.apply` tidak memakai LLM.
-- LLM tidak memilih lowongan, tidak menentukan skor matching, tidak menekan
-  tombol apa pun.
-- Teks hasil LLM dievaluasi dulu: validasi zod, cek fakta terhadap profil,
-  pertanyaan sensitif dari `portal_answers`, bukan LLM.
-- Jika LLM gagal/timeout: fallback template instan, tidak error ke user.
+- LLM tidak memilih lowongan, tidak menentukan skor matching akhir, tidak
+  menimpa tabel `profiles` tanpa review, dan tidak menekan tombol apa pun.
+- Output LLM wajib melewati validasi zod; pertanyaan sensitif selalu diambil
+  dari `portal_answers`, bukan LLM.
+- Jika LLM gagal/timeout/down: `cv.parse` mengarahkan user ke input manual, dan
+  `application.prepare` jatuh ke template instan tanpa error ke user.
 
 **Konsekuensi:**
 
-- Arsitektur pemisahan jelas: LLM sebagai alat writing, adapter sebagai alat
-  sending.
-- Ollama CPU-only cukup; inference 1-2 menit per draft tidak memblokir UI.
-- Pilot error LLM tidak mengganggu antrean; fallback otomatis.
+- Arsitektur pemisahan jelas: LLM sebagai alat ekstraksi/writing, manusia
+  sebagai verifikator, adapter sebagai alat sending.
+- Ollama CPU-only cukup karena semua pemanggilan berjalan via queue.
 - LLM lokal (Ollama) mencegah data CV dikirim ke provider komersial.
 
 ---
@@ -480,3 +515,84 @@ menemukan selector dan navigasi otomatis. Apakah agent bisa dipakai di runtime?
   (misalnya: klik tombol tidak terduga, isi form dengan pola yang berubah).
 - Perubahan halaman platform hanya perlu update selector, bukan logika agent.
 - Testing memakai fixture HTML tersimpan, tidak memanggil situs asli.
+
+---
+
+## ADR-024: Parsing CV opsional via Ollama self-host (`qwen3:4b`)
+
+**Status:** Diterima
+
+**Konteks:** Mengisi seluruh riwayat pengalaman, pendidikan, dan skill secara
+manual saat onboarding memakan waktu. Kebijakan privasi memperbolehkan data CV
+dan profil diproses oleh AI selama model berjalan di server internal milik
+proyek (tanpa pihak ketiga) dan didahului persetujuan user.
+
+**Keputusan:**
+
+- Sediakan fitur **CV Parsing opsional** menggunakan Ollama `qwen3:4b` yang
+  berjalan di Docker container pada Oracle VM yang sama (shared 4 OCPU / 24 GB
+  RAM bersama Next.js dan PostgreSQL).
+- Saat onboarding atau edit profil, user dapat memilih:
+  1. Isi profil secara manual,
+  2. Unggah CV (PDF/DOCX) hanya sebagai arsip, atau
+  3. Unggah CV & jalankan parsing otomatis (membutuhkan centang consent).
+- Alur teknis: ekstraksi teks di sisi aplikasi (`pdfjs-dist` untuk PDF,
+  `mammoth` untuk DOCX) -> simpan di `uploaded_cvs` -> antrekan job `cv.parse`
+  di `pg-boss` -> panggil Ollama per bagian (`identity`, `experiences`,
+  `educations`, `skills`) dengan output JSON tervalidasi zod -> simpan sebagai
+  saran di `cv_parse_suggestions`.
+- Hasil parsing **tidak pernah langsung menimpa** tabel profil utama; user
+  wajib melakukan review (terima/edit/tolak per bagian).
+- **Fallback:** Jika Ollama down, timeout, atau gagal validasi JSON setelah
+  retry, sistem mengubah status run menjadi `failed`/`skipped` dan langsung
+  mengarahkan user ke form input manual tanpa memblokir onboarding.
+- **Penyimpanan file CV:** Disimpan di disk lokal VM (`/data/cv`) dengan
+  kebijakan retensi otomatis dihapus setelah **30 hari** (`delete_after`).
+- **Pentahapan:** Versi dasar masuk di **Phase 1** (ekstraksi teks + parsing
+  JSON dasar + review + fallback manual) dan ditingkatkan di **Phase 6**
+  (section-wise chunking, confidence score, source snippet, dan peningkatan
+  akurasi lewat prompt/Modelfile/LoRA).
+
+**Konsekuensi:**
+
+- Onboarding jauh lebih cepat bagi user yang sudah memiliki CV PDF/DOCX, tetap
+  $0 biaya API, dan data tidak pernah keluar dari VM proyek.
+- Container `ollama` dibatasi (`cpus: "1.5"`, `mem_limit: 5g`,
+  `OLLAMA_NUM_PARALLEL=1`) agar tidak mengganggu latensi Next.js dan PostgreSQL.
+- PDF hasil scan tanpa lapisan teks (image-only) ditandai `skipped` di Phase 1
+  dan diarahkan ke input manual (OCR tidak masuk scope Phase 1).
+
+---
+
+## ADR-025: Persetujuan eksplisit (consent) sebelum pemrosesan data CV oleh AI
+
+**Status:** Diterima
+
+**Konteks:** Walaupun Ollama berjalan di server internal dan bukan pihak ketiga,
+pemrosesan CV dan profil oleh model AI maupun penggunaan data untuk evaluasi/
+training membutuhkan dasar persetujuan yang jelas dan dapat diaudit.
+
+**Keputusan:**
+
+- Sebelum job `cv.parse` atau pemrosesan AI atas profil dijalankan, user wajib
+  memberikan persetujuan eksplisit (opt-in, checkbox terpisah dari syarat
+  layanan umum).
+- Persetujuan disimpan di tabel `user_consents` dengan kolom `kind`
+  (`privacy` | `cv_ai_processing` | `ai_training_opt_in`), `version`
+  (mis. `2026-11-06.v1`), `accepted_at`, dan `revoked_at`.
+- Endpoint API parsing memeriksa keberadaan consent aktif dengan versi terbaru
+  secara server-side; tanpa consent, API menolak dengan `403`.
+- User dapat mencabut consent kapan saja dari halaman pengaturan; pencabutan
+  menghentikan antrean parsing, menghapus `cv_parse_runs`,
+  `cv_parse_suggestions`, serta menghapus file di `/data/cv` bila diminta.
+- Penggunaan data CV/profil untuk pembuatan eval set atau training LoRA
+  memerlukan consent terpisah (`ai_training_opt_in`) **dan** proses anonimisasi
+  PII sesuai [ai-training.md](ai-training.md).
+
+**Konsekuensi:**
+
+- Jejak audit privasi jelas untuk setiap pemrosesan AI.
+- Perubahan kebijakan privasi cukup menaikkan `CV_AI_CONSENT_VERSION` sehingga
+  user diminta menyetujui ulang sebelum memakai fitur AI.
+- User yang menolak consent tetap dapat memakai seluruh fitur inti aplikasi
+  melalui input manual dan template.

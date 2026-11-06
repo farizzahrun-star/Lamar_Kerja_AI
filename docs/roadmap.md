@@ -29,7 +29,8 @@ Target: aplikasi bisa dijalankan lokal dengan database dan autentikasi.
 
 ## Phase 1: Profil dan CV
 
-Target: user bisa mengisi data diri dan mengunduh CV PDF tanpa AI.
+Target: user bisa mengisi data diri, mengunggah CV lama (opsional), dan
+mengunduh CV PDF tanpa bergantung pada AI.
 
 - Onboarding wizard per bagian dengan autosave.
 - CRUD profil: data pribadi, pendidikan, pengalaman, skill, sertifikasi, bahasa.
@@ -38,6 +39,16 @@ Target: user bisa mengisi data diri dan mengunduh CV PDF tanpa AI.
 - Renderer `@react-pdf/renderer`, preview, dan download.
 - Versioning resume (`resumes.version`).
 - Unit test untuk validator dan renderer.
+- **Upload CV lama (opsional):** PDF/DOCX maks 10 MB, disimpan di
+  `/data/cv/<user_id>/<uuid>` dengan retensi 30 hari.
+- **CV parsing Phase 1 (opsional, butuh consent):** ekstraksi teks
+  (`pdfjs-dist`, `mammoth`) lalu job `cv.parse` ke Ollama `qwen3:4b`; hasil
+  masuk `cv_parse_suggestions` dan wajib di-review user sebelum masuk profil.
+- **Consent flow:** checkbox terpisah, terversi (`CV_AI_CONSENT_VERSION`),
+  dicek server-side (403 bila tidak ada), dapat dicabut.
+- **Fallback manual penuh:** Ollama down/timeout/JSON invalid → user diarahkan
+  ke form manual tanpa blokir; PDF scan ditandai `skipped`.
+- Worker `cv.cleanup` harian untuk menghapus file CV > 30 hari.
 
 ## Phase 2: Tahap 1 dan 2 - Scraping Guest dan Pemilihan
 
@@ -97,9 +108,12 @@ Target: lamaran ber-email HR terkirim otomatis dan statusnya terlacak.
 - Penyimpanan message ID, `tracking_events`, dan `inbox.sync` (deteksi balasan).
 - Halaman riwayat lamaran.
 
-## Phase 6: Tahap 4b - Portal dan Easy Apply
+## Phase 6: Portal, Easy Apply, dan Peningkatan CV Parsing
 
-Target: Local Runner mengisi form portal dan berhenti sebelum Submit.
+Target: Local Runner mengisi form portal dan berhenti sebelum Submit, serta
+akurasi parsing CV ditingkatkan.
+
+**Portal & Easy Apply**
 
 - `runner_tasks` dan handler `portal.apply` di Runner.
 - Profil browser per user; alur login manual satu kali dan pemeriksaan
@@ -111,11 +125,20 @@ Target: Local Runner mengisi form portal dan berhenti sebelum Submit.
 - `runner.watchdog` untuk tugas menggantung.
 - Mode "hanya link" untuk lowongan tanpa adapter.
 
+**Peningkatan CV Parsing (v2)**
+
+- Section-wise chunking dengan prompt terpisah per bagian dan `num_ctx` efisien.
+- `confidence` dan `source_snippet` per saran agar user mudah memverifikasi.
+- Prompt/Modelfile tuning + evaluasi F1 ekstraksi field (lihat
+  [evaluation.md](evaluation.md)).
+- Review UI yang menampilkan diff per field dan bulk accept/reject.
+- (Opsional) LoRA/QLoRA hanya jika baseline prompt terbukti tidak cukup.
+
 ## Phase 7: Peningkatan Opsional
 
 Target: kualitas dan cakupan, tanpa mengubah arsitektur inti.
 
-- Ollama `qwen3:4b` dan toggle `AI_ENABLED`.
+- Toggle `AI_ENABLED` per environment dan kill switch AI.
 - Eval set dan harness di `tests/eval` (lihat [evaluation.md](evaluation.md)).
 - Perbandingan kualitas teks template vs LLM.
 - Adapter Glassdoor (best effort) dan situs lain.
@@ -126,12 +149,15 @@ Target: kualitas dan cakupan, tanpa mengubah arsitektur inti.
 
 ### Prasyarat Sebelum Training Model
 
-Training LLM baru dipertimbangkan hanya jika seluruh syarat berikut terpenuhi:
+Training LLM baru (LoRA/QLoRA) dipertimbangkan hanya jika seluruh syarat berikut
+terpenuhi:
 
 - [ ] Eval set 50-100 contoh sudah ada dan versi-nya terkunci.
-- [ ] Baseline template dan model saat ini sudah diukur.
-- [ ] Dataset minimal 300 contoh berkualitas, sudah dianonimisasi.
-- [ ] Ada bukti bahwa perbaikan prompt/template tidak lagi cukup.
+- [ ] Baseline prompt + `qwen3:4b` dan template sudah diukur (F1 per field,
+      hallucination rate, latency p95).
+- [ ] Dataset minimal 300 contoh berkualitas, sudah dianonimisasi, dan memiliki
+      consent `ai_training_opt_in`.
+- [ ] Ada bukti bahwa perbaikan prompt/Modelfile tidak lagi cukup.
 - [ ] Ada rencana rollback dan model champion tetap tersedia.
 
 Jika salah satu belum terpenuhi, jangan mulai training.
@@ -139,6 +165,12 @@ Jika salah satu belum terpenuhi, jangan mulai training.
 ## Definition of Done MVP
 
 - [ ] User bisa daftar, mengisi profil, dan mengunduh CV PDF tanpa AI.
+- [ ] User dapat mengunggah CV lama dan memilih parsing otomatis (opt-in) atau
+      input manual; tanpa consent API parsing menolak (403).
+- [ ] Saran hasil parsing wajib di-review user sebelum masuk profil.
+- [ ] File CV unggahan terhapus otomatis setelah 30 hari (`cv.cleanup`).
+- [ ] Ollama offline tidak memblokir onboarding: form manual dan draf template
+      tetap bekerja.
 - [ ] Local Runner mengambil lowongan guest dari Glints, Jobstreet, dan LinkedIn
       sesuai kuota dan jeda yang ditetapkan.
 - [ ] Platform yang terblokir tercatat dan tidak menghentikan platform lain.

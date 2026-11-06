@@ -8,14 +8,14 @@ menjelaskan komponen teknis yang menjalankannya.
 | Aspek | Keputusan |
 |---|---|
 | Model produk | Proyek personal, tim internal (2 orang), target 10 user dalam 3 bulan |
-| Hosting server | Satu Oracle Cloud Always Free VM (ARM, 2 OCPU / 12 GB) |
+| Hosting server | Satu Oracle Cloud Always Free VM (Ampere A1 ARM, **4 OCPU / 24 GB RAM**) |
 | Scraping & isi form portal | **Local Runner** di laptop/PC anggota tim (IP residensial) |
 | Browser automation | Playwright deterministik; agent browser hanya untuk authoring adapter |
 | Mode scraping | Guest (tanpa login), maks 10 lowongan/platform/hari, jeda acak |
 | Frontend + API | Next.js 15 App Router + TypeScript (standalone output) |
 | Database | PostgreSQL 16 self-host di VM |
 | Queue | pg-boss (berbasis PostgreSQL, tanpa Redis) |
-| AI | Ollama `qwen3:4b` CPU-only, **opsional**; hanya menyusun teks |
+| AI | Ollama `qwen3:4b` CPU-only (Docker container internal); parsing CV opsional (butuh persetujuan/consent) & draf teks; fallback manual/template jika down |
 | PDF | `@react-pdf/renderer` (tanpa Chromium di VM) |
 | Pengiriman | Email HR via Gmail API; portal via Local Runner |
 | Privasi | Data kandidat tidak dikirim ke provider AI pihak ketiga |
@@ -24,20 +24,25 @@ menjelaskan komponen teknis yang menjalankannya.
 ## Prinsip Arsitektur
 
 1. **Template-first, rules-first, AI-last.** Seluruh fitur inti berjalan dengan
-   `AI_ENABLED=false`. LLM hanya menyusun teks lamaran.
+   `AI_ENABLED=false` atau ketika Ollama sedang offline/down. AI berfungsi
+   sebagai akselerator (ekstraksi saran profil dan variasi teks lamaran), bukan
+   fondasi wajib.
 2. **LLM tidak pernah mengirim apa pun.** Pengiriman dilakukan adapter: Gmail
    API (email) dan Playwright di Local Runner (portal).
-3. **Data kandidat tidak keluar ke provider AI.** Inferensi hanya lewat Ollama
-   lokal.
+3. **Data kandidat tidak keluar ke provider AI pihak ketiga.** Inferensi AI
+   hanya melalui Ollama lokal di dalam jaringan privat Docker internal VM.
+   Pemrosesan CV/profil oleh Ollama wajib didahului persetujuan (consent)
+   eksplisit dari user.
 4. **Scraping dan interaksi portal berjalan di Local Runner**, bukan di VM, agar
    memakai IP residensial dan sesi login tidak pernah meninggalkan perangkat
    user.
 5. **Server tidak menyimpan password atau cookie platform.**
 6. **Lowongan disajikan sebagai snapshot harian.** User yang login hari ini
    melihat data hari sebelumnya (H-1).
-7. **Semua pekerjaan berat asynchronous** lewat queue.
-8. **Manusia tetap otoritas akhir.** User memilih lowongan (tahap 2), dapat
-   me-review draft, dan menekan Submit pada portal secara default.
+7. **Semua pekerjaan berat asynchronous** lewat queue `pg-boss`.
+8. **Manusia tetap otoritas akhir.** User memilih lowongan (tahap 2), meninjau
+   saran parsing CV sebelum masuk profil, dapat me-review draf, dan menekan
+   Submit pada portal secara default.
 
 ## Gambaran Besar
 
@@ -53,17 +58,17 @@ menjelaskan komponen teknis yang menjalankannya.
                          v
               Cloudflare Tunnel (HTTPS, tanpa membuka port)
                          |
-  +----------------------v-----------------------+
-  |          Oracle Free VM - 2 OCPU / 12 GB     |
-  |                                              |
-  |  [web]     Next.js        UI + Route Handlers|
-  |  [worker]  Node + pg-boss ingest, matching,  |
-  |                           prepare, email     |
-  |  [db]      PostgreSQL 16  data + queue       |
-  |  [ollama]  qwen3:4b (opsional)               |
-  |  [caddy]   reverse proxy internal            |
-  |  /data     PDF, backup                       |
-  +----------------------+-----------------------+
+  +----------------------v------------------------------------+
+  |      Oracle Free VM - Ampere A1 (4 OCPU / 24 GB RAM)      |
+  |                                                           |
+  |  [web]     Next.js        UI + Route Handlers             |
+  |  [worker]  Node + pg-boss ingest, matching, cv.parse,    |
+  |                           prepare, email, watchdog        |
+  |  [db]      PostgreSQL 16  data + queue + pgvector         |
+  |  [ollama]  qwen3:4b       container internal (port 11434) |
+  |  [caddy]   reverse proxy  internal                        |
+  |  /data     /data/cv (retensi 30 hr), /data/resumes        |
+  +----------------------+------------------------------------+
                          |
                   outbound: Gmail API
 ```
@@ -87,6 +92,8 @@ menjelaskan komponen teknis yang menjalankannya.
 | `jobs.ingest` | Normalisasi, dedupe, simpan job + snapshot, deteksi channel | Runner mengirim hasil |
 | `matching.compute` | Hitung skor semua user aktif terhadap snapshot | Setelah ingest |
 | `runner.plan` | Menyusun rencana pencarian harian untuk Runner | Harian |
+| `cv.parse` | Ekstraksi teks CV unggahan via Ollama per bagian menjadi saran profil | User mengunggah CV + consent |
+| `cv.cleanup` | Hapus file CV mentah yang telah berusia > 30 hari | Harian |
 | `application.prepare` | Membuat CV khusus lowongan dan teks lamaran | Antrean `queued` |
 | `email.send` | Kirim via Gmail API dengan jeda acak | Aplikasi `ready` channel email |
 | `inbox.sync` | Deteksi balasan | Berkala |
@@ -131,25 +138,44 @@ Detail alur ada di [workflow.md](workflow.md) dan aturan sumber di
 - `pgvector` untuk semantic matching (fase lanjutan).
 - Schema `pgboss` untuk queue.
 
-### Ollama (opsional)
+### Ollama (Service AI Internal)
 
-- Model default `qwen3:4b`, `num_ctx=8192`.
-- Dipakai hanya di `application.prepare` untuk menyusun teks.
-- Tidak pernah memilih lowongan, menentukan skor, atau menekan tombol.
-- Gagal/lambat/JSON tidak valid -> fallback template tanpa error ke user.
+- Berjalan sebagai container Docker resmi (`ollama/ollama:latest`) di dalam
+  jaringan internal yang sama dengan web dan worker.
+- Model default: `qwen3:4b` (quantized `Q4_K_M`), parameter `num_ctx=8192`.
+- Digunakan untuk:
+  1. `cv.parse`: mengekstrak informasi profil dari CV lama user menjadi format
+     JSON terstruktur (hanya dengan consent aktif).
+  2. `application.prepare`: menyusun teks cover letter, draf email, dan pesan
+     reach-out HR.
+- **Batasan Resource Container:**
+  - `cpus: "1.5"` dan `mem_limit: 5g` agar tidak mengganggu Next.js dan Postgres.
+  - `OLLAMA_NUM_PARALLEL: 1` untuk eksekusi sekuensial hemat CPU.
+  - Mode thinking dimatikan (`/no_think`) pada task ekstraksi untuk efisiensi latensi.
+- **Prinsip Fallback Penuh:**
+  - Jika container Ollama tidak merespons, timeout (>180 detik), atau
+    menghasilkan format tidak valid:
+    - Pada `cv.parse`: status ditandai `failed`, UI menampilkan notifikasi ramah,
+      dan mengarahkan user untuk mengisi form profil secara manual.
+    - Pada `application.prepare`: sistem langsung beralih ke generator draf
+      berbasis template tanpa menimbulkan error ke pengguna.
 
 ### Penyimpanan File
 
-Direktori `/data` di VM untuk PDF CV dan lampiran. Metadata di PostgreSQL.
-Backup harian dienkripsi lalu dikirim ke object storage gratis.
-
-Runner mengunduh PDF CV dari VM saat `portal.apply` melalui URL bertanda tangan
-berumur pendek, lalu menghapus salinan lokalnya setelah selesai.
+- Direktori `/data/cv` di VM: menyimpan file CV mentah yang diunggah user
+  (`uploaded_cvs`), dihapus otomatis setelah 30 hari.
+- Direktori `/data/resumes` di VM: menyimpan file PDF CV hasil render template
+  internal (`@react-pdf/renderer`) untuk dikirim ke perusahaan.
+- Runner mengunduh PDF CV dari VM saat `portal.apply` melalui URL bertanda
+  tangan berumur pendek (15 menit), lalu menghapus salinan lokalnya setelah
+  selesai.
 
 ## Model Data
 
 ```text
 users               id, email, password_hash, name, role, created_at
+user_consents       id, user_id, kind(privacy|cv_ai_processing|ai_training_opt_in),
+                    version, accepted_at, revoked_at, user_agent_hash
 profiles            user_id, phone, address, birth_date, headline, summary,
                     linkedin_url, portfolio_url, expected_salary, availability
 educations          profile_id, level, institution, major, gpa, start_year, end_year
@@ -159,6 +185,17 @@ experience_points   experience_id, content, sort_order
 skills              profile_id, name, level, years
 certifications      profile_id, name, issuer, year, credential_url
 languages           profile_id, name, proficiency
+
+uploaded_cvs        id, user_id, file_path, original_filename, mime, size_bytes,
+                    sha256, text_content, status(uploaded|extracted|skipped),
+                    created_at, delete_after
+cv_parse_runs       id, uploaded_cv_id, user_id, task(identity|experiences|
+                    educations|skills|full), model, consent_version,
+                    status(pending|running|parsed|failed|skipped),
+                    duration_ms, output_json, error_code, created_at
+cv_parse_suggestions id, parse_run_id, user_id, section, field_path,
+                    value_json, confidence, source_snippet,
+                    status(pending|accepted|rejected), decided_at
 
 interests           id, slug, label
 user_interests      user_id, interest_id
@@ -202,6 +239,11 @@ audit_log           actor_id, action, entity, entity_id, meta_json, ip, created_
 
 Catatan desain:
 
+- `uploaded_cvs` adalah file CV mentah yang diunggah user (sumber ekstraksi),
+  sedangkan `resumes` adalah CV PDF yang digenerate sistem menggunakan template.
+- `cv_parse_suggestions` menampung usulan field hasil parsing LLM. Data profil
+  hanya terupdate jika user menyetujui (accept/merge) saran tersebut.
+- `user_consents` mencatat riwayat persetujuan eksplisit user untuk pemrosesan AI.
 - `jobs` adalah master lowongan; `job_snapshots` mencatat lowongan yang terlihat
   pada tanggal tertentu (dasar logic H-1).
 - Satu lowongan dapat punya beberapa `job_urls` dari platform berbeda; channel
@@ -212,6 +254,49 @@ Catatan desain:
   Runner yang memeriksa dan melaporkannya.
 - `matches` dihitung terhadap snapshot, bukan query realtime.
 - `drafts.source` mencatat asal teks (template atau LLM).
+
+## Pipeline Onboarding & CV Parsing (Opsional)
+
+Pipeline ini dijalankan saat user baru mendaftar atau ingin memperbarui profil
+menggunakan berkas CV lama:
+
+```text
+User buka Onboarding / Edit Profil
+   |
+   +--> Jalur A (Manual): User langsung mengisi form wizard per bagian
+   |
+   +--> Jalur B (Unggah CV + Parsing AI Internal):
+        1. User mengunggah file CV (PDF/DOCX maks 10MB)
+        2. User mencentang persetujuan pemrosesan AI (user_consents dicatat)
+        3. Server menyimpan file ke /data/cv/<user_id>/<uuid> (retensi 30 hari)
+        4. Ekstraksi teks lokal berbasis kode:
+             - pdfjs-dist untuk PDF
+             - mammoth untuk DOCX
+             - jika tidak ada layer teks (scan image) -> status 'skipped',
+               notifikasi: "PDF hasil scan, silakan isi data diri manual"
+        5. Enqueue job cv.parse ke pg-boss (prioritas normal)
+        6. Worker cv.parse memanggil Ollama qwen3:4b di container:
+             - Prompt terstruktur per bagian (identity, experiences,
+               educations, skills) dengan parameter /no_think & format json
+             - Validasi skema output menggunakan zod
+        7. Simpan hasil parsing ke cv_parse_suggestions (status = 'pending')
+        8. User membuka halaman Review Profil:
+             - Menampilkan diff: data saat ini vs saran ekstraksi AI
+             - User memilih: "Terima Semua", "Terima Per Bagian", atau "Tolak"
+        9. Hanya saran yang di-accept yang disimpan ke tabel profiles,
+           educations, experiences, dan skills.
+```
+
+### Mekanisme Circuit Breaker & Fallback CV Parsing
+
+| Kondisi | Respon Sistem |
+|---|---|
+| Ollama container offline / healthcheck gagal | Service worker menandai job `failed`; UI memberitahu: "Layanan ekstraksi otomatis sedang offline, silakan isi form secara manual." Form manual langsung aktif. |
+| Timeout inferensi (> 180 detik) | Worker retry 1 kali. Jika tetap timeout, tandai `failed` dan arahkan ke form manual. |
+| Output LLM bukan JSON valid | Retry 1 kali dengan prompt perbaikan. Jika gagal, tandai `failed` dan fallback ke input manual. |
+| PDF scan (teks < 50 karakter) | Ditandai `skipped` tanpa memanggil LLM untuk menghemat resource CPU. |
+| User mencabut consent | Job dibatalkan, suggestions dihapus, file CV dijadwalkan hapus. |
+| Error beruntun (3 kali dalam 5 menit) | Circuit breaker aktif: job `cv.parse` berikutnya ditunda 10 menit untuk mencegah lonjakan CPU. |
 
 ## Pipeline Tahap 1 - Ingest Lowongan
 
@@ -374,17 +459,27 @@ Detail ada di [privacy.md](privacy.md).
 
 ## Deployment
 
-VM (Docker Compose):
+VM (Docker Compose di Oracle Cloud Always Free 4 OCPU / 24 GB RAM):
 
 ```text
-  - web       (Next.js standalone)
-  - worker    (node)
-  - db        (postgres:16 + pgvector)
-  - ollama    (opsional, profil "ai")
-  - caddy     (reverse proxy)
+  - web       (Next.js standalone, port 3000 internal)
+  - worker    (Node + pg-boss)
+  - db        (PostgreSQL 16 + pgvector, port 5432 localhost)
+  - ollama    (ollama/ollama:latest, qwen3:4b, port 11434 internal, cpus: 1.5, mem_limit: 5g)
+  - caddy     (reverse proxy internal)
 
 Cloudflare Tunnel -> caddy -> web
 ```
+
+Alokasi Resource di VM (24 GB RAM / 4 OCPU):
+
+| Service | Alokasi RAM | Alokasi CPU | Catatan |
+|---|---|---|---|
+| Next.js Web | 1 - 2 GB | 0.5 OCPU | Standalone build |
+| PostgreSQL 16 | 3 - 4 GB | 0.5 OCPU | Shared buffers, pgvector |
+| Worker (pg-boss) | 1 - 2 GB | 0.5 OCPU | Ingest, matching, dispatch |
+| Ollama Container | 4 - 5 GB | 1.5 OCPU | qwen3:4b Q4_K_M, concurrency 1 |
+| OS & Swap Buffer | ~11 - 14 GB | 1.0 OCPU | Ruang bebas sistem, caching I/O |
 
 Laptop/PC anggota tim:
 
@@ -400,13 +495,14 @@ Langkah lengkap ada di [setup.md](setup.md).
 | Risiko | Mitigasi |
 |---|---|
 | Kapasitas Oracle Free ARM habis saat signup | Coba beberapa region; sementara jalankan lokal + Cloudflare Tunnel |
-| Akun Oracle di-reclaim karena idle | Monitoring ringan + backup otomatis |
-| VM 12 GB tidak cukup saat user bertambah | Pisahkan worker/Ollama ke mesin lain |
-| Ollama CPU lambat | Queue + fallback template instan |
-| IP rumah terkena CAPTCHA/blokir | Volume rendah, jeda manusia, berhenti saat blokir, fallback snapshot |
+| Akun Oracle di-reclaim karena idle | Monitoring ringan + script utilitas reguler + backup otomatis |
+| Ollama memakan CPU tinggi saat inferensi | Docker pinning `cpus: "1.5"`, `OLLAMA_NUM_PARALLEL=1`, queue background |
+| Ollama offline / kehabisan memori | Healthcheck Docker otomatis restart; fallback instan ke input manual / template |
+| IP rumah terkena CAPTCHA/blokir | Volume rendah (10/platform/hari), jeda acak manusia, berhenti saat blokir |
 | Struktur halaman platform berubah | Fixture test, alert success rate < 80% |
-| Laptop runner mati | Fallback snapshot terakhir + watchdog + CSV/URL manual |
+| Laptop runner mati | Fallback snapshot H-1 terakhir + watchdog + CSV/URL manual |
 | Auto-submit portal salah isi | Default berhenti sebelum Submit; pertanyaan sensitif dari `portal_answers` |
 | Sesi login platform dicurigai | Satu lamaran sekaligus, jeda acak, login manual oleh user |
 | Hasil scraping memuat instruksi berbahaya | Treat as untrusted; sanitasi; LLM tidak punya tool |
-| Data CV sensitif | Enkripsi kolom sensitif, backup terenkripsi, akses DB lokal |
+| Data CV mentah tersimpan terlalu lama | Kebijakan retensi 30 hari + cron job `cv.cleanup` harian |
+| Data CV sensitif bocor ke pihak ketiga | Dilarang memakai API komersial; Ollama internal di container localhost |
