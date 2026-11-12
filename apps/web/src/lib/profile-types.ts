@@ -17,6 +17,11 @@ export type ExperienceRow = Database["public"]["Tables"]["experiences"]["Row"] &
 export type SkillRow = Database["public"]["Tables"]["skills"]["Row"];
 export type CertificationRow = Database["public"]["Tables"]["certifications"]["Row"];
 export type LanguageRow = Database["public"]["Tables"]["languages"]["Row"];
+export type ResumeRow = Database["public"]["Tables"]["resumes"]["Row"];
+export type ResumeListItem = Pick<
+  ResumeRow,
+  "id" | "version" | "template" | "created_at" | "application_id"
+>;
 
 export interface ProfileBundle {
   profile: ProfileRow;
@@ -25,6 +30,11 @@ export interface ProfileBundle {
   skills: SkillRow[];
   certifications: CertificationRow[];
   languages: LanguageRow[];
+}
+
+export interface ResumeSnapshot extends ProfileBundle {
+  generatedAt: string;
+  email: string | null;
 }
 
 export interface ApiErrorBody {

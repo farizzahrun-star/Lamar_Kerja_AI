@@ -6,8 +6,7 @@ yang bisa dicentang.
 
 **Legenda:** `[ ]` belum · `[x]` selesai · `[!]` terblokir (lihat catatan)
 
-**Status saat ini:** Phase 1 sedang berjalan — M0 dan M1 selesai, lanjut M2 (CV PDF). Batch 1 = M0 + M1 + M2.
-Batch 2 = M3 + M4.
+**Status saat ini:** Batch 1 (M0 + M1 + M2) selesai. Siap lanjut ke Batch 2 (M3 + M4).
 
 ---
 
@@ -104,14 +103,14 @@ mengunduh CV PDF tanpa bergantung pada AI.
 
 ### M2 — CV PDF (Batch 1)
 
-- [ ] Template A — fresh graduate
-- [ ] Template B — berpengalaman
-- [ ] Renderer `@react-pdf/renderer` (A4, tanpa Chromium)
-- [ ] `POST /api/resumes` + versioning
-- [ ] `GET /api/resumes/:id/file` (inline/attachment + ownership)
-- [ ] Halaman `/profile/cv` (pilih template, preview, download, riwayat)
-- [ ] Test render profil kosong/parsial/lengkap
-- [ ] Verifikasi isi teks PDF hasil render
+- [x] Template A — fresh graduate
+- [x] Template B — berpengalaman
+- [x] Renderer `@react-pdf/renderer` (A4, tanpa Chromium)
+- [x] `POST /api/resumes` + versioning
+- [x] `GET /api/resumes/:id/file` (inline/attachment + ownership)
+- [x] Halaman `/profile/cv` (pilih template, preview, download, riwayat)
+- [x] Test render profil kosong/parsial/lengkap
+- [x] Verifikasi isi teks PDF hasil render
 
 ### M3 — Upload CV, Consent, Parsing (Batch 2)
 
@@ -155,9 +154,9 @@ mengunduh CV PDF tanpa bergantung pada AI.
 - [ ] Update `setup.md`, `architecture.md`, `team-onboarding.md`, README
 
 **Verifikasi Phase 1**
-- [ ] Register/login/logout + session persist
-- [ ] Onboarding autosave bertahan setelah reload
-- [ ] CV A/B preview & download, versioning benar
+- [x] Register/login/logout + session persist
+- [x] Onboarding autosave bertahan setelah reload
+- [x] CV A/B preview & download, versioning benar
 - [ ] Upload tanpa consent → 403
 - [ ] PDF scan → `skipped` tanpa memanggil Ollama
 - [ ] Ollama mati → `failed`, form manual tetap jalan
@@ -289,3 +288,4 @@ mengunduh CV PDF tanpa bergantung pada AI.
 | 2026-11-12 | M0 | Task board dibuat; implementasi fondasi dimulai |
 | 2026-11-12 | M0 | Scaffold workspace, web, auth Supabase, migration `0001_phase1_schema`, tipe DB, logger PII. Verifikasi: lint/typecheck/test/build hijau, alur daftar→dashboard→logout→login diuji lewat browser, RLS diuji dengan dua akun. Docs (ADR-026, architecture, setup, privacy) disinkronkan. |
 | 2026-11-12 | M1 | Schema zod (`@lamarkerja/shared`), Route Handlers `/api/profile` + CRUD pendidikan/pengalaman(+poin)/skill/sertifikasi/bahasa, wizard `/onboarding` (autosave identitas 800ms + `onboarding_step`) dan `/profile`. Verifikasi Playwright: autosave bertahan setelah reload, reorder poin pengalaman, selesai onboarding → `/profile`, RLS lintas user pada seluruh tabel anak (0 baris terlihat, `404` pada mutasi lintas user). |
+| 2026-11-12 | M2 | Template A (fresh graduate) & B (berpengalaman) dengan `@react-pdf/renderer` (A4 tanpa Chromium), penyimpanan `RESUME_STORAGE_DIR` + guard path traversal, `GET/POST /api/resumes` (versioning per user + snapshot `data_json`), `GET /api/resumes/:id/file` (inline/attachment + kepemilikan RLS), halaman `/profile/cv` (pilih template, preview iframe, unduh, riwayat versi). Unit test profil kosong/parsial/lengkap + ekstraksi teks PDF, serta verifikasi e2e Playwright lintas user. |

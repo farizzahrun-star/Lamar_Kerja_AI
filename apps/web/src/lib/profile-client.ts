@@ -1,4 +1,6 @@
-import type { ApiErrorBody, ProfileBundle, ProfileRow } from "@/lib/profile-types";
+import type { ResumeTemplate } from "@lamarkerja/shared";
+
+import type { ApiErrorBody, ProfileBundle, ProfileRow, ResumeListItem } from "@/lib/profile-types";
 
 export type ApiResult<T> =
   | { ok: true; data: T }
@@ -73,4 +75,15 @@ export function updateEntry<T>(resource: ResourceName, id: string, payload: unkn
 
 export function deleteEntry(resource: ResourceName, id: string) {
   return request<{ id: string }>(`${RESOURCE_PATHS[resource]}/${id}`, { method: "DELETE" });
+}
+
+export function fetchResumes() {
+  return request<ResumeListItem[]>("/api/resumes");
+}
+
+export function createResume(template: ResumeTemplate) {
+  return request<ResumeListItem>("/api/resumes", {
+    method: "POST",
+    body: JSON.stringify({ template }),
+  });
 }

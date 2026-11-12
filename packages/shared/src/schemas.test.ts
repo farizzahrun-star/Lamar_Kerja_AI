@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   certificationSchema,
+  createResumeSchema,
   educationSchema,
   experienceSchema,
   identityPatchSchema,
@@ -151,5 +152,11 @@ describe("schema sederhana", () => {
     const result = languageSchema.parse({ name: "Inggris", proficiency: "" });
 
     expect(result.proficiency).toBeNull();
+  });
+
+  it("createResumeSchema hanya menerima template A atau B", () => {
+    expect(createResumeSchema.parse({ template: "A" }).template).toBe("A");
+    expect(createResumeSchema.parse({ template: "B" }).template).toBe("B");
+    expect(createResumeSchema.safeParse({ template: "C" }).success).toBe(false);
   });
 });

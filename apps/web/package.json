@@ -12,6 +12,7 @@
   "dependencies": {
     "@lamarkerja/db": "workspace:*",
     "@lamarkerja/shared": "workspace:*",
+    "@react-pdf/renderer": "^4.9.0",
     "@supabase/server": "^1.9.2",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.80.0",

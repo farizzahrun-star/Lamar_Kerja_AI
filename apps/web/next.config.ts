@@ -14,6 +14,7 @@ const nextConfig: NextConfig = {
   output: output === "standalone" ? "standalone" : undefined,
   reactStrictMode: true,
   poweredByHeader: false,
+  serverExternalPackages: ["@react-pdf/renderer"],
 };
 
 export default nextConfig;

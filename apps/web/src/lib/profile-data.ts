@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { ProfileBundle, ProfileRow } from "@/lib/profile-types";
+import type { ProfileBundle, ProfileRow, ResumeListItem } from "@/lib/profile-types";
 import { createClient } from "@/lib/supabase/server";
 
 export type {
@@ -11,6 +11,9 @@ export type {
   LanguageRow,
   ProfileBundle,
   ProfileRow,
+  ResumeListItem,
+  ResumeRow,
+  ResumeSnapshot,
   SkillRow,
 } from "@/lib/profile-types";
 
@@ -82,4 +85,18 @@ export async function loadProfileBundle(
     certifications: certifications.data ?? [],
     languages: languages.data ?? [],
   };
+}
+
+export async function loadUserResumes(
+  supabase: Client,
+  userId: string,
+): Promise<ResumeListItem[]> {
+  const { data, error } = await supabase
+    .from("resumes")
+    .select("id, version, template, created_at, application_id")
+    .eq("user_id", userId)
+    .order("version", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
 }

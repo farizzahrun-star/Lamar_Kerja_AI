@@ -216,6 +216,14 @@ export const languageSchema = z.object({
 
 export type LanguageInput = z.input<typeof languageSchema>;
 
+export const RESUME_TEMPLATE_IDS = ["A", "B"] as const;
+export const createResumeSchema = z.object({
+  template: z.enum(RESUME_TEMPLATE_IDS, {
+    message: "Template harus A atau B.",
+  }),
+});
+export type CreateResumeInput = z.input<typeof createResumeSchema>;
+
 export type IdentityValues = z.output<typeof identitySchema>;
 export type IdentityPatchValues = z.output<typeof identityPatchSchema>;
 export type EducationValues = z.output<typeof educationSchema>;
