@@ -1,0 +1,26 @@
+{
+  "name": "lamarkerja-ai",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "corepack pnpm --filter @lamarkerja/web dev",
+    "build": "corepack pnpm --filter @lamarkerja/web build",
+    "start": "corepack pnpm --filter @lamarkerja/web start",
+    "lint": "eslint .",
+    "typecheck": "corepack pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^15.5.6",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

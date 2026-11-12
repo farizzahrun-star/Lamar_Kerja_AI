@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #f7f5f0;
+  --color-paper-deep: #efece3;
+  --color-ink: #16211e;
+  --color-ink-soft: #4a5a55;
+  --color-line: #ddd8cc;
+  --color-accent: #1f6f5c;
+  --color-accent-deep: #15503f;
+  --color-accent-soft: #dcefe8;
+  --color-amber: #b9701c;
+
+  --font-sans: "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--color-accent-soft);
+    color: var(--color-accent-deep);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .field {
+    @apply flex w-full rounded-lg border border-line bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-soft/60;
+    @apply transition-colors duration-150 outline-none;
+  }
+
+  .field:focus {
+    @apply border-accent/70 ring-2 ring-accent/15;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold tracking-wide text-ink-soft uppercase;
+  }
+
+  .btn-primary {
+    @apply inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white;
+    @apply transition-colors duration-150 hover:bg-accent-deep disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .card {
+    @apply rounded-2xl border border-line bg-white/90 p-6 shadow-[0_1px_0_rgba(22,33,30,0.04)];
+  }
+}

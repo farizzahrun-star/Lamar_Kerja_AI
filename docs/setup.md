@@ -5,25 +5,28 @@
 ```text
 Runtime:        Node.js 22 + TypeScript
 Frontend + API: Next.js 15 (App Router, standalone output)
-Database:       PostgreSQL 16 (self-host)
-Queue:          pg-boss (tanpa Redis)
+Database:       Supabase Postgres (managed, RLS)
+Queue:          Tabel antrean di Postgres + worker polling
 PDF:            @react-pdf/renderer
 Scraping:       Playwright (guest) di Local Runner
 Apply:          Gmail API + Playwright (portal) di Local Runner
 AI:             Ollama + qwen3:4b (CPU-only, Docker container internal)
 Email:          Gmail API (OAuth)
-Auth:           Auth.js, credentials
+Auth:           Supabase Auth (@supabase/ssr)
 Deploy:         Oracle Cloud Always Free VM (4 OCPU / 24 GB RAM) + Docker Compose + Cloudflare Tunnel
 Runner:         Laptop/PC anggota tim (Windows/macOS)
 ```
 
-Tidak ada Redis, tidak ada API LLM komersial pihak ketiga, dan tidak ada
-layanan luar yang menerima data CV kandidat.
+Tidak ada Redis dan tidak ada API LLM komersial pihak ketiga. Data kandidat
+disimpan di Supabase sebagai pemroses data (ADR-026); inferensi AI hanya lewat
+Ollama internal di VM.
 
 ## Prasyarat
 
 - Node.js 22 dan pnpm.
-- Docker Desktop (untuk PostgreSQL & Ollama lokal) atau PostgreSQL 16 terpasang langsung.
+- Project Supabase (atau akses ke project yang sudah ada) beserta URL, publishable
+  key, dan secret key.
+- Docker Desktop untuk Ollama lokal.
 - Git.
 - Playwright + Chromium untuk Local Runner (scraping & portal apply).
 - Ollama (via Docker compose atau instalasi lokal host).
@@ -37,14 +40,30 @@ checklist hari pertama, access matrix produksi, dan alur kontribusi.
 git clone <repo>
 cd Lamar_Kerja_AI
 cp .env.example .env
+cp .env.example apps/web/.env.local
 pnpm install
-docker compose -f infrastructure/docker-compose.yml up -d db ollama
-docker compose -f infrastructure/docker-compose.yml exec ollama ollama pull qwen3:4b
-pnpm db:migrate
 pnpm dev
 ```
 
-Aplikasi berjalan di `http://localhost:3000`.
+Aplikasi berjalan di `http://localhost:3000`. Ollama hanya dibutuhkan untuk
+parsing CV (M3); `infrastructure/docker-compose.yml` belum ada, jadi untuk
+sekarang jalankan Ollama lokal (`ollama serve`) lalu `ollama pull qwen3:4b`.
+
+### Supabase
+
+1. Isi `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, dan
+   `SUPABASE_JWKS_URL` di `.env` **dan** `apps/web/.env.local` (Next.js hanya
+   memuat env dari direktori aplikasi).
+2. Terapkan migration `migrations/0001_phase1_schema.sql` ke project. Cara yang
+   dipakai saat ini: Supabase MCP `apply_migration`; alternatifnya Supabase CLI
+   (`supabase db push`) dengan project ter-link.
+3. Setelah schema berubah, generate ulang tipe:
+   `supabase gen types typescript --linked > packages/db/src/types.ts`.
+4. Pastikan **RLS aktif** dan hanya secret key yang dipakai untuk operasi server
+   (worker, upload CV, audit log). Secret key tidak boleh masuk bundle browser.
+
+Registrasi memakai `admin.createUser` dengan `email_confirm: true`, sehingga
+tidak butuh SMTP. Set `REGISTRATION_ENABLED=false` untuk menutup pendaftaran.
 
 ### Menjalankan worker
 
@@ -52,8 +71,9 @@ Aplikasi berjalan di `http://localhost:3000`.
 pnpm worker:dev
 ```
 
-Worker dan web menggunakan database yang sama. pg-boss membuat schema `pgboss`
-secara otomatis pada eksekusi pertama.
+Worker memakai `SUPABASE_URL` + `SUPABASE_SECRET_KEY` untuk polling tabel
+antrean (Phase 1: `cv_parse_runs`), jadi tidak memerlukan `DATABASE_URL`.
+Perintah `worker:dev` ditambahkan pada milestone M3.
 
 ### Menjalankan Local Runner
 
@@ -112,19 +132,28 @@ evaluasi, fine-tune LoRA/QLoRA), lihat [ai-training.md](ai-training.md) dan
 
 ## Environment Variable
 
-### Aplikasi & Database
+### Aplikasi, Supabase & Penyimpanan
 
 ```env
 # Aplikasi
 NODE_ENV=development
 APP_URL=http://localhost:3000
-SESSION_SECRET=
 
-# Database
-DATABASE_URL=postgres://lamarkerja:lamarkerja@localhost:5432/lamarkerja
+# Registrasi terbuka (internal). Set false untuk mode undangan.
+REGISTRATION_ENABLED=true
 
-# Enkripsi token OAuth
+# Supabase (server-side; jangan kirim secret key ke browser)
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SECRET_KEY=
+SUPABASE_JWKS_URL=
+
+# Enkripsi token OAuth (Phase 5)
 EMAIL_ENCRYPTION_KEY=
+
+# Penyimpanan file lokal di VM
+CV_STORAGE_DIR=./data/cv
+RESUME_STORAGE_DIR=./data/resumes
 ```
 
 ### Local Runner (Scraping & Portal Apply)
@@ -181,10 +210,11 @@ GMAIL_REDIRECT_URI=http://localhost:3000/api/auth/gmail/callback
 ### Penyimpanan & Backup
 
 ```env
-# Penyimpanan lokal
-STORAGE_DIR=./data
+# Penyimpanan lokal CV dan PDF hasil render
+CV_STORAGE_DIR=./data/cv
+RESUME_STORAGE_DIR=./data/resumes
 
-# Backup (opsional)
+# Backup (opsional, untuk ekspor dari Supabase)
 BACKUP_S3_ENDPOINT=
 BACKUP_S3_BUCKET=
 BACKUP_S3_ACCESS_KEY=
@@ -199,14 +229,15 @@ BACKUP_ENCRYPTION_KEY=
 | Perintah | Fungsi |
 |---|---|
 | `pnpm dev` | Jalankan web dalam mode development |
-| `pnpm worker:dev` | Jalankan worker dengan watch |
-| `pnpm build` | Build Next.js standalone |
-| `pnpm db:generate` | Generate migration dari schema |
-| `pnpm db:migrate` | Jalankan migration |
-| `pnpm db:studio` | Buka Drizzle Studio |
+| `pnpm build` | Build Next.js (standalone otomatis di Linux; Windows pakai `NEXT_OUTPUT=standalone` bila perlu) |
+| `pnpm lint` | ESLint |
+| `pnpm typecheck` | Typecheck semua package |
 | `pnpm test` | Unit test |
-| `pnpm test:e2e` | End-to-end test |
-| `pnpm lint` | Lint dan typecheck |
+| `pnpm worker:dev` | Jalankan worker (M3) |
+| `pnpm test:e2e` | End-to-end test (belum tersedia) |
+
+Migration tidak lewat script npm: terapkan SQL di `migrations/` memakai Supabase
+MCP `apply_migration` atau Supabase CLI, lalu generate ulang tipe database.
 
 ## Local Runner
 
@@ -278,10 +309,10 @@ Buka Task Scheduler, buat task baru:
 
 ### Phase 0: Fondasi
 
-1. Scaffold monorepo (`apps/web`, `apps/runner`, `workers`, `packages/*`).
-2. Docker Compose untuk PostgreSQL dan environment lokal.
-3. Schema database awal dan migration.
-4. Auth.js (credentials) dan layout dashboard dasar.
+1. Scaffold monorepo (`apps/web`, `packages/*`, `workers`).
+2. Project Supabase + migration `0001_phase1_schema.sql` (skema, RLS, trigger).
+3. Supabase Auth (login/register/logout) dan layout dashboard dasar.
+4. Environment validation, `/api/health`, dan tooling (lint, typecheck, test).
 
 ### Phase 1: Profil dan CV
 
@@ -368,16 +399,20 @@ Aturan:
 1. Buat VM Ampere A1 (Always Free): **4 OCPU, 24 GB RAM**, Ubuntu 24.04 (kuota
    maksimum gratis).
 2. Install Docker dan Docker Compose.
-3. Clone repository, salin `.env`, isi secret.
-4. Jalankan `docker compose up -d`.
-5. Tarik model qwen3:4b di container ollama:
-   `docker compose exec ollama ollama pull qwen3:4b`
-6. Pasang Cloudflare Tunnel, arahkan ke service `caddy` (port 80 internal).
-7. Aktifkan backup harian (`infrastructure/backup.sh`) dan cleanup CV
-   (`cv.cleanup`) lewat cron.
-8. Uji restore dari backup sebelum dianggap selesai.
+3. Clone repository, salin `.env` dan `apps/web/.env.local`, isi variabel Supabase
+   (URL, publishable key, secret key, JWKS) serta konfigurasi AI.
+4. Terapkan migration ke project Supabase (MCP `apply_migration` atau Supabase
+   CLI), lalu generate ulang `packages/db/src/types.ts`.
+5. Jalankan `docker compose up -d` (compose berisi web, worker, ollama, caddy;
+   ditambahkan pada milestone worker).
+6. Tarik model qwen3:4b di container ollama.
+7. Pasang Cloudflare Tunnel, arahkan ke service `caddy` (port 80 internal).
+8. Jadwalkan ekspor database Supabase terenkripsi + cleanup CV (`cv.cleanup`)
+   lewat cron.
+9. Uji restore dari ekspor sebelum dianggap selesai.
 
-Tidak ada port yang dibuka ke internet; akses masuk melalui tunnel.
+Tidak ada port yang dibuka ke internet; akses masuk melalui tunnel. Database dan
+autentikasi tidak berjalan di VM, melainkan di Supabase (ADR-026).
 
 ## Checklist Sebelum Merge
 

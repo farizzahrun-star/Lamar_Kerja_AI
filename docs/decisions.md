@@ -51,7 +51,7 @@ dikerjakan solo dan belum ada kode backend.
 
 ## ADR-003: PostgreSQL self-host, bukan database terkelola
 
-**Status:** Diterima
+**Status:** Digantikan oleh ADR-026
 
 **Konteks:** Supabase/Neon gratis menidurkan instance dan menyimpan data di
 infrastruktur pihak lain.
@@ -271,7 +271,7 @@ memakan RAM VM yang juga dipakai PostgreSQL dan Ollama.
 
 ## ADR-014: Autentikasi credentials saja
 
-**Status:** Diterima
+**Status:** Digantikan oleh ADR-026
 
 **Konteks:** Skala personal dan invite-only; OAuth login menambah kompleksitas
 tanpa manfaat besar.
@@ -596,3 +596,67 @@ training membutuhkan dasar persetujuan yang jelas dan dapat diaudit.
   user diminta menyetujui ulang sebelum memakai fitur AI.
 - User yang menolak consent tetap dapat memakai seluruh fitur inti aplikasi
   melalui input manual dan template.
+
+---
+
+## ADR-026: Supabase untuk autentikasi dan database
+
+**Status:** Diterima (Menggantikan ADR-003 dan ADR-014)
+
+**Konteks:** ADR-003 menolak database terkelola karena instance gratis sering
+ditidurkan dan data disimpan di infrastruktur pihak lain, sedangkan ADR-014
+memilih Auth.js dengan kredensial. Proyek kemudian memakai Supabase sebagai
+backend terkelola: server MCP Supabase sudah terhubung, `@supabase/server`
+dipasang di `apps/web`, dan kredensial proyek tersedia sebagai environment
+variable.
+
+**Keputusan:**
+
+- **Autentikasi** memakai Supabase Auth, bukan Auth.js credentials. Server
+  memverifikasi JWT lewat JWKS (`SUPABASE_JWKS_URL`) memakai `@supabase/server`
+  (`withSupabase`, `verifyAuth`), sehingga Route Handlers dan Server Actions
+  tidak perlu memvalidasi token sendiri.
+- **Database** aplikasi berjalan di Supabase Postgres, bukan container
+  PostgreSQL di VM. `pgcrypto` dan `pgvector` tetap dipakai; queue tetap
+  `pg-boss` karena hanya butuh PostgreSQL (ADR-004 tidak berubah).
+- **Kredensial:**
+  - `SUPABASE_URL` dan `SUPABASE_PUBLISHABLE_KEY` boleh dipakai klien sisi user.
+  - `SUPABASE_SECRET_KEY` hanya untuk server (Route Handlers, Server Actions,
+    worker) dan tidak boleh dikirim ke browser.
+  - Nilai disimpan di `.env` (root, untuk worker/runner) dan `apps/web/.env.local`
+    (dimuat Next.js). Keduanya di-ignore oleh Git.
+- **Migration** dikelola lewat Supabase MCP / Supabase CLI, bukan `drizzle-kit`
+  ke database lokal.
+- ADR-003 dan ADR-014 berstatus digantikan oleh keputusan ini.
+
+**Konsekuensi:**
+
+- Backup, upgrade, dan ketersediaan database tidak lagi tanggung jawab sendiri,
+  tetapi data kandidat kini berada di infrastruktur pihak ketiga. Ini harus
+  ditinjau terhadap [privacy.md](privacy.md) dan ADR-025 (consent), karena
+  ADR-009 secara eksplisit membatasi pemrosesan data pada infrastruktur yang
+  dikelola sendiri.
+- ADR-001 hanya berlaku sebagian: VM tetap menjalankan web, worker, dan Ollama;
+  database keluar dari VM dan alokasi resource 24 GB berubah.
+- ADR-018 (role `app`/`analytics_ro`, larangan menyalin database produksi) perlu
+  disesuaikan dengan model akses Supabase (RLS, service role, dashboard).
+- Free tier Supabase memiliki batas koneksi dan dapat di-pause saat idle. Alur
+  snapshot H-1 (ADR-011) dan worker `pg-boss` bergantung pada database yang
+  selalu hidup, sehingga perlu monitoring dan rencana upgrade.
+- `setup.md` dan `architecture.md` masih mendeskripsikan PostgreSQL self-host
+  dan Auth.js. Keduanya perlu pembaruan terpisah agar tidak menyesatkan.
+
+**Catatan implementasi:**
+
+- Paket `@supabase/server@^1.9.2` terpasang di `apps/web`.
+- Skill `supabase` dan `supabase-server` tersedia untuk panduan penulisan kode
+  server-side.
+- Migration `migrations/0001_phase1_schema.sql` sudah diterapkan ke project
+  `ktdpqfqxdnlyryvsdwnh` (migration `phase1_schema`); tipe database digenerate ke
+  `packages/db/src/types.ts`.
+- Phase 1 menjalankan `cv.parse` lewat worker yang **polling** tabel
+  `cv_parse_runs` memakai secret key, bukan `pg-boss`. `pg-boss` tetap rencana
+  saat worker membutuhkan retry terjadwal atau koneksi Postgres langsung; ini
+  tidak mengubah ADR-004, hanya menunda pemakaiannya.
+- Storage file (CV mentah dan PDF hasil render) tetap di disk VM, bukan Supabase
+  Storage.

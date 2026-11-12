@@ -53,7 +53,7 @@ tersimpan versinya di `user_consents`:
   user-agent saat persetujuan diberikan.
 - **Pengecekan di sisi server:** API backend (`/api/cv/parse`) memverifikasi
   apakah user memiliki rekaman persetujuan aktif dengan versi terkini sebelum
-  membuat task di antrean `pg-boss`. Jika tidak ada atau versi lama, request
+  membuat baris `cv_parse_runs`. Jika tidak ada atau versi lama, request
   ditolak dengan status HTTP `403 Forbidden`.
 - **Pencabutan persetujuan:** Jika user mencabut persetujuan, sistem mengubah
   `revoked_at`, membatalkan antrean parsing yang sedang berjalan, menghapus
@@ -64,18 +64,33 @@ tersimpan versinya di `user_consents`:
 
 | Data | Lokasi | Retensi | Enkripsi / Keamanan |
 |---|---|---|---|
-| Profil, pendidikan, pengalaman, skill | PostgreSQL di VM | Selama akun aktif | At-rest disk; akses dibatasi localhost |
-| CV Asli yang diunggah (`uploaded_cvs`) | Direktori `/data/cv` di VM | Maksimal **30 hari** (`delete_after`), lalu dihapus permanen | At-rest disk; nama file UUID acak |
-| Saran hasil parsing (`cv_parse_suggestions`) | PostgreSQL di VM | Dihapus setelah di-review atau maksimal 30 hari | At-rest disk; cascade delete bila consent dicabut |
-| Catatan persetujuan (`user_consents`) | PostgreSQL di VM | Selama akun aktif | Log audit kepatuhan |
-| CV PDF hasil render (`resumes`) | Direktori `/data/resumes` di VM | Selama lamaran aktif | At-rest disk; render dari template internal |
-| Token OAuth Gmail | PostgreSQL di VM | Selama akun terhubung | `pgcrypto` + `EMAIL_ENCRYPTION_KEY` |
-| Password user | PostgreSQL di VM | Selama akun aktif | Hash argon2id |
-| Jawaban form sensitif (`portal_answers`) | PostgreSQL di VM | Selama akun aktif | At-rest disk; tidak boleh ditebak LLM |
-| Status sesi platform (`user_platforms.session_status`) | PostgreSQL di VM | Selama akun aktif | Tanpa kredensial (hanya `none/logged_in/expired`) |
+| Profil, pendidikan, pengalaman, skill | Supabase Postgres (managed) | Selama akun aktif | RLS per user; akses server via secret key |
+| CV Asli yang diunggah (`uploaded_cvs`) | Direktori `/data/cv` di VM | Maksimal **30 hari** (`delete_after`), lalu dihapus permanen | At-rest disk VM; nama file UUID acak |
+| Saran hasil parsing (`cv_parse_suggestions`) | Supabase Postgres | Dihapus setelah di-review atau maksimal 30 hari | RLS per user; cascade delete bila consent dicabut |
+| Catatan persetujuan (`user_consents`) | Supabase Postgres | Selama akun aktif | Log audit kepatuhan |
+| CV PDF hasil render (`resumes`) | Direktori `/data/resumes` di VM | Selama lamaran aktif | At-rest disk VM; render dari template internal |
+| Token OAuth Gmail | Supabase Postgres | Selama akun terhubung | `pgcrypto` + `EMAIL_ENCRYPTION_KEY` |
+| Password user | Supabase Auth (`auth.users`) | Selama akun aktif | Hash dikelola Supabase Auth |
+| Jawaban form sensitif (`portal_answers`) | Supabase Postgres | Selama akun aktif | RLS per user; tidak boleh ditebak LLM |
+| Status sesi platform (`user_platforms.session_status`) | Supabase Postgres | Selama akun aktif | Tanpa kredensial (hanya `none/logged_in/expired`) |
 | Profil browser platform (`profile-guest`, `profile-<user>`) | Laptop/PC anggota tim (Local Runner) | Lokal di perangkat | Tidak pernah dikirim ke server |
 | Password & cookie platform | **Tidak pernah disimpan** | — | — |
-| Backup database | Object storage pribadi | Maksimal 30 hari | Terenkripsi dengan AES/GPG sebelum upload |
+| Backup database | Supabase + ekspor terenkripsi ke object storage pribadi | Maksimal 30 hari | Terenkripsi dengan AES/GPG sebelum upload |
+
+### Pemroses Data Pihak Ketiga: Supabase
+
+Supabase adalah penyedia infrastruktur database dan autentikasi (ADR-026). Data
+profil, kredensial akun (dikelola Supabase Auth), saran parsing, dan catatan
+consent tersimpan di project Supabase milik proyek ini.
+
+- Supabase bertindak sebagai **pemroses data**, bukan pemilik data; proyek tetap
+  mengendalikan akses lewat secret key server dan dashboard.
+- Tidak ada data yang dikirim ke layanan AI komersial. Inferensi tetap hanya di
+  Ollama internal.
+- File CV mentah dan PDF hasil render **tidak** disimpan di Supabase; keduanya
+  berada di disk VM.
+- RLS membatasi setiap user pada barisnya sendiri. Operasi lintas user hanya
+  dilakukan worker/server dengan secret key.
 
 ### Data di Local Runner
 
@@ -96,6 +111,7 @@ Sistem hanya melakukan koneksi keluar untuk hal berikut:
 
 | Tujuan | Data yang dikirim | Alasan |
 |---|---|---|
+| Supabase (Auth + Postgres) | Data profil, consent, metadata CV, dan kredensial akun | Database dan autentikasi terkelola (ADR-026) |
 | Sumber lowongan (ATS feed, API resmi) | Hanya request pencarian lowongan | Mengambil data lowongan publik |
 | Gmail API | Isi email lamaran yang sudah disetujui user | Mengirim email dari akun user sendiri |
 | Object storage backup | Dump database terenkripsi | Disaster recovery |
@@ -113,6 +129,9 @@ itulah tujuan melamar.
 
 - **Oracle Cloud** adalah penyedia infrastruktur. Data berada di disk VM yang
   disewa dari Oracle. Ini diterima sebagai konsekuensi interpretasi yang dipakai.
+- **Supabase** adalah pemroses data untuk database dan autentikasi. Data
+  kandidat berada di infrastruktur Supabase, di luar VM proyek. Ini diterima
+  lewat ADR-026 dan dibatasi RLS.
 - **Gmail API** menerima isi email lamaran karena fungsinya memang mengirim
   email. Ini hanya terjadi setelah user menekan approve.
 - **Situs lowongan** menerima request pencarian guest, bukan data user. Saat
@@ -140,7 +159,9 @@ Saat menjalankan portal apply (Tahap 4b di [workflow.md](workflow.md)):
 
 ## Enkripsi dan Akses
 
-- Database hanya listen di localhost dan tidak diekspos ke internet.
+- Database berada di Supabase dan tidak diekspos langsung; akses data dibatasi
+  RLS dan secret key server.
+- Password dikelola Supabase Auth; aplikasi tidak menyimpan hash password sendiri.
 - Token OAuth dienkripsi at-rest dengan kunci yang disimpan di environment,
   bukan di database.
 - Akses SSH memakai key, bukan password.
@@ -187,7 +208,9 @@ Indonesia tetap dijadikan acuan:
 - Ada dasar pemrosesan yang jelas (persetujuan user saat onboarding).
 - Data dikumpulkan seperlunya (data diri format lamaran kerja).
 - Ada mekanisme penghapusan data.
-- Tidak ada transfer data pribadi ke pihak ketiga untuk tujuan komersial.
+- Data pribadi tidak dijual atau dipakai untuk tujuan komersial pihak ketiga;
+  Supabase hanya bertindak sebagai pemroses data, dan tidak ada transfer ke
+  penyedia AI komersial.
 
 Dokumen ini bukan nasihat hukum. Jika proyek berubah menjadi layanan komersial,
 kebijakan ini harus ditinjau ulang.

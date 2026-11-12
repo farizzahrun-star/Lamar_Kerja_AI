@@ -13,8 +13,8 @@ menjelaskan komponen teknis yang menjalankannya.
 | Browser automation | Playwright deterministik; agent browser hanya untuk authoring adapter |
 | Mode scraping | Guest (tanpa login), maks 10 lowongan/platform/hari, jeda acak |
 | Frontend + API | Next.js 15 App Router + TypeScript (standalone output) |
-| Database | PostgreSQL 16 self-host di VM |
-| Queue | pg-boss (berbasis PostgreSQL, tanpa Redis) |
+| Database | Supabase Postgres terkelola (ADR-026); akses lewat API + RLS |
+| Queue | Tabel antrean di Postgres, di-polling worker; pg-boss menyusul saat butuh throughput tinggi |
 | AI | Ollama `qwen3:4b` CPU-only (Docker container internal); parsing CV opsional (butuh persetujuan/consent) & draf teks; fallback manual/template jika down |
 | PDF | `@react-pdf/renderer` (tanpa Chromium di VM) |
 | Pengiriman | Email HR via Gmail API; portal via Local Runner |
@@ -32,14 +32,17 @@ menjelaskan komponen teknis yang menjalankannya.
 3. **Data kandidat tidak keluar ke provider AI pihak ketiga.** Inferensi AI
    hanya melalui Ollama lokal di dalam jaringan privat Docker internal VM.
    Pemrosesan CV/profil oleh Ollama wajib didahului persetujuan (consent)
-   eksplisit dari user.
+   eksplisit dari user. Penyimpanan data memakai Supabase sebagai pemroses data
+   (ADR-026); tidak ada data yang dikirim ke layanan AI komersial.
 4. **Scraping dan interaksi portal berjalan di Local Runner**, bukan di VM, agar
    memakai IP residensial dan sesi login tidak pernah meninggalkan perangkat
    user.
 5. **Server tidak menyimpan password atau cookie platform.**
 6. **Lowongan disajikan sebagai snapshot harian.** User yang login hari ini
    melihat data hari sebelumnya (H-1).
-7. **Semua pekerjaan berat asynchronous** lewat queue `pg-boss`.
+7. **Pekerjaan berat asynchronous dijalankan worker.** Phase 1 memakai tabel
+   antrean di Postgres yang di-polling worker; pg-boss ditambahkan saat job
+   membutuhkan retry terjadwal dan volume tinggi.
 8. **Manusia tetap otoritas akhir.** User memilih lowongan (tahap 2), meninjau
    saran parsing CV sebelum masuk profil, dapat me-review draf, dan menekan
    Submit pada portal secara default.
@@ -61,23 +64,23 @@ menjelaskan komponen teknis yang menjalankannya.
   +----------------------v------------------------------------+
   |      Oracle Free VM - Ampere A1 (4 OCPU / 24 GB RAM)      |
   |                                                           |
-  |  [web]     Next.js        UI + Route Handlers             |
-  |  [worker]  Node + pg-boss ingest, matching, cv.parse,    |
-  |                           prepare, email, watchdog        |
-  |  [db]      PostgreSQL 16  data + queue + pgvector         |
+  |  [web]     Next.js        UI + Route Handlers + Auth      |
+  |  [worker]  Node           cv.parse & job lain (polling)   |
   |  [ollama]  qwen3:4b       container internal (port 11434) |
   |  [caddy]   reverse proxy  internal                        |
   |  /data     /data/cv (retensi 30 hr), /data/resumes        |
-  +----------------------+------------------------------------+
-                         |
-                  outbound: Gmail API
+  +-------------+----------------------------+-----------------+
+                |                            |
+    HTTPS: Auth + Postgres (RLS)             | outbound: Gmail API
+                v                            v
+        Supabase (managed)               Gmail API
 ```
 
 ## Komponen
 
 ### Web (Next.js)
 
-- Autentikasi dan session.
+- Autentikasi dan session (Supabase Auth via `@supabase/ssr`, cookie httpOnly).
 - Onboarding: data diri, CV, interest, platform, koneksi Gmail.
 - Dashboard lowongan snapshot H-1 dengan skor dan channel apply.
 - Pemilihan lowongan dan antrean apply (tahap 2).
@@ -85,7 +88,7 @@ menjelaskan komponen teknis yang menjalankannya.
 - Endpoint khusus Local Runner (`/api/runner/*`).
 - Halaman admin ringan: status runner, `collector_runs`, kill switch.
 
-### Worker (Node + pg-boss)
+### Worker (Node)
 
 | Handler | Tugas | Pemicu |
 |---|---|---|
@@ -99,8 +102,11 @@ menjelaskan komponen teknis yang menjalankannya.
 | `inbox.sync` | Deteksi balasan | Berkala |
 | `runner.watchdog` | Tandai runner mati, kembalikan tugas portal yang menggantung | Berkala |
 
-Worker memakai retry dengan backoff, idempotency key per task, dan dead-letter
-queue dari pg-boss.
+Worker berjalan sebagai proses Node terpisah dan memakai secret key Supabase
+(bypass RLS) untuk membaca serta menulis tabel antrean. Phase 1 memakai polling
+`cv_parse_runs`; pg-boss ditambahkan saat job membutuhkan retry terjadwal dan
+volume tinggi. Worker memakai retry dengan backoff, idempotency key per task,
+dan dead-letter queue.
 
 ### Local Runner
 
@@ -131,12 +137,18 @@ Karakteristik:
 Detail alur ada di [workflow.md](workflow.md) dan aturan sumber di
 [sources.md](sources.md).
 
-### PostgreSQL
+### Supabase Postgres
 
-- Sumber kebenaran tunggal.
-- `pgcrypto` untuk enkripsi kolom sensitif.
-- `pgvector` untuk semantic matching (fase lanjutan).
-- Schema `pgboss` untuk queue.
+- Sumber kebenaran tunggal ada di Supabase Postgres (project terkelola).
+- Autentikasi user berada di schema `auth` (Supabase Auth); data aplikasi di
+  schema `public`.
+- RLS aktif pada semua tabel `public`. User hanya dapat membaca dan mengubah
+  barisnya sendiri; operasi lintas user (worker, upload CV, audit log) memakai
+  secret key di server.
+- `pgcrypto` tersedia untuk enkripsi kolom sensitif; `pgvector` untuk semantic
+  matching (fase lanjutan).
+- Migration berupa SQL di `migrations/`, diterapkan lewat Supabase MCP / CLI,
+  bukan `drizzle-kit`.
 
 ### Ollama (Service AI Internal)
 
@@ -173,11 +185,12 @@ Detail alur ada di [workflow.md](workflow.md) dan aturan sumber di
 ## Model Data
 
 ```text
-users               id, email, password_hash, name, role, created_at
+auth.users          id, email, encrypted_password, created_at (dikelola Supabase Auth)
 user_consents       id, user_id, kind(privacy|cv_ai_processing|ai_training_opt_in),
                     version, accepted_at, revoked_at, user_agent_hash
-profiles            user_id, phone, address, birth_date, headline, summary,
-                    linkedin_url, portfolio_url, expected_salary, availability
+profiles            user_id, full_name, phone, address, birth_date, headline, summary,
+                    linkedin_url, portfolio_url, expected_salary, availability,
+                    onboarding_step, onboarding_completed_at
 educations          profile_id, level, institution, major, gpa, start_year, end_year
 experiences         profile_id, company, title, employment_type, start_date,
                     end_date, is_current, description
@@ -189,10 +202,11 @@ languages           profile_id, name, proficiency
 uploaded_cvs        id, user_id, file_path, original_filename, mime, size_bytes,
                     sha256, text_content, status(uploaded|extracted|skipped),
                     created_at, delete_after
-cv_parse_runs       id, uploaded_cv_id, user_id, task(identity|experiences|
-                    educations|skills|full), model, consent_version,
+cv_parse_runs       id, uploaded_cv_id, user_id, section(identity|experiences|
+                    educations|skills), model, consent_version,
                     status(pending|running|parsed|failed|skipped),
-                    duration_ms, output_json, error_code, created_at
+                    duration_ms, output_json, error_code, attempts,
+                    created_at, started_at, finished_at
 cv_parse_suggestions id, parse_run_id, user_id, section, field_path,
                     value_json, confidence, source_snippet,
                     status(pending|accepted|rejected), decided_at
@@ -274,7 +288,8 @@ User buka Onboarding / Edit Profil
              - mammoth untuk DOCX
              - jika tidak ada layer teks (scan image) -> status 'skipped',
                notifikasi: "PDF hasil scan, silakan isi data diri manual"
-        5. Enqueue job cv.parse ke pg-boss (prioritas normal)
+        5. Insert baris `cv_parse_runs` (status `pending`); worker polling
+           mengambilnya lewat secret key Supabase
         6. Worker cv.parse memanggil Ollama qwen3:4b di container:
              - Prompt terstruktur per bagian (identity, experiences,
                educations, skills) dengan parameter /no_think & format json
@@ -438,8 +453,9 @@ Skor adalah ranking awal, bukan keputusan otomatis.
 
 ## Keamanan
 
-- Session cookie `httpOnly`, `secure`, `sameSite=lax`.
-- Password di-hash argon2id.
+- Session dikelola Supabase Auth; cookie di-set lewat `@supabase/ssr`
+  (`httpOnly`, `secure`, `sameSite=lax`).
+- Password di-hash dan disimpan oleh Supabase Auth, bukan oleh aplikasi.
 - Token OAuth Gmail dienkripsi at-rest (`pgcrypto`); kunci di env.
 - **Token runner** disimpan sebagai hash, dapat dicabut, dibatasi pada endpoint
   `/api/runner/*` saja.
@@ -453,7 +469,8 @@ Skor adalah ranking awal, bukan keputusan otomatis.
 - Kill switch global untuk scraping, email, dan portal.
 - Semua perubahan status masuk `tracking_events` dan `audit_log`.
 - Log tidak memuat isi CV, token, atau alamat email lengkap.
-- Database hanya listen di localhost.
+- Data di Supabase dilindungi RLS per user; secret key hanya ada di server dan
+  tidak pernah dikirim ke browser.
 
 Detail ada di [privacy.md](privacy.md).
 
@@ -463,23 +480,28 @@ VM (Docker Compose di Oracle Cloud Always Free 4 OCPU / 24 GB RAM):
 
 ```text
   - web       (Next.js standalone, port 3000 internal)
-  - worker    (Node + pg-boss)
-  - db        (PostgreSQL 16 + pgvector, port 5432 localhost)
+  - worker    (Node, cv.parse polling)
   - ollama    (ollama/ollama:latest, qwen3:4b, port 11434 internal, cpus: 1.5, mem_limit: 5g)
   - caddy     (reverse proxy internal)
 
 Cloudflare Tunnel -> caddy -> web
+web/worker -> Supabase (Auth + Postgres, HTTPS)
 ```
+
+Database, autentikasi, dan backup tidak lagi berjalan di VM; ketiganya menjadi
+tanggung jawab Supabase (ADR-026).
 
 Alokasi Resource di VM (24 GB RAM / 4 OCPU):
 
 | Service | Alokasi RAM | Alokasi CPU | Catatan |
 |---|---|---|---|
 | Next.js Web | 1 - 2 GB | 0.5 OCPU | Standalone build |
-| PostgreSQL 16 | 3 - 4 GB | 0.5 OCPU | Shared buffers, pgvector |
-| Worker (pg-boss) | 1 - 2 GB | 0.5 OCPU | Ingest, matching, dispatch |
+| Worker (Node) | 1 - 2 GB | 0.5 OCPU | Ingest, matching, cv.parse, dispatch |
 | Ollama Container | 4 - 5 GB | 1.5 OCPU | qwen3:4b Q4_K_M, concurrency 1 |
-| OS & Swap Buffer | ~11 - 14 GB | 1.0 OCPU | Ruang bebas sistem, caching I/O |
+| OS & Swap Buffer | sisa RAM | 1.0 OCPU | Ruang bebas sistem, caching I/O |
+
+Supabase free tier menangani database, autentikasi, dan backup di luar VM;
+kuota gratisnya membatasi koneksi dan dapat di-pause saat idle.
 
 Laptop/PC anggota tim:
 
@@ -506,3 +528,4 @@ Langkah lengkap ada di [setup.md](setup.md).
 | Hasil scraping memuat instruksi berbahaya | Treat as untrusted; sanitasi; LLM tidak punya tool |
 | Data CV mentah tersimpan terlalu lama | Kebijakan retensi 30 hari + cron job `cv.cleanup` harian |
 | Data CV sensitif bocor ke pihak ketiga | Dilarang memakai API komersial; Ollama internal di container localhost |
+| Supabase free tier di-pause saat idle | Worker menangani kegagalan koneksi dengan retry; monitoring uptime + rencana upgrade |
