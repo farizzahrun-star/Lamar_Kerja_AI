@@ -1,7 +1,9 @@
 /**
- * Konstanta domain yang dipakai bersama oleh web, worker, dan tooling.
+ * Konstanta dan schema domain yang dipakai bersama oleh web, worker, dan tooling.
  * Jangan menaruh nilai rahasia di sini.
  */
+
+export * from "./schemas";
 
 export const CV_AI_CONSENT_VERSION = "2026-11-06.v1";
 

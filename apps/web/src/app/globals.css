@@ -57,6 +57,21 @@
     @apply transition-colors duration-150 hover:bg-accent-deep disabled:cursor-not-allowed disabled:opacity-60;
   }
 
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3.5 py-2 text-sm font-semibold text-ink;
+    @apply transition-colors duration-150 hover:bg-paper-deep disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-ink-soft;
+    @apply transition-colors duration-150 hover:bg-paper-deep hover:text-ink;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-red-700;
+    @apply transition-colors duration-150 hover:bg-red-50;
+  }
+
   .card {
     @apply rounded-2xl border border-line bg-white/90 p-6 shadow-[0_1px_0_rgba(22,33,30,0.04)];
   }

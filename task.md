@@ -6,7 +6,7 @@ yang bisa dicentang.
 
 **Legenda:** `[ ]` belum · `[x]` selesai · `[!]` terblokir (lihat catatan)
 
-**Status saat ini:** Phase 1 dimulai dari M0 (fondasi). Batch 1 = M0 + M1 + M2.
+**Status saat ini:** Phase 1 sedang berjalan — M0 dan M1 selesai, lanjut M2 (CV PDF). Batch 1 = M0 + M1 + M2.
 Batch 2 = M3 + M4.
 
 ---
@@ -79,28 +79,28 @@ mengunduh CV PDF tanpa bergantung pada AI.
 ### M1 — Profil & Onboarding (Batch 1)
 
 **Schema & validasi**
-- [ ] Schema zod profil (identitas)
-- [ ] Schema zod pendidikan
-- [ ] Schema zod pengalaman + bullet
-- [ ] Schema zod skill, sertifikasi, bahasa
-- [ ] Unit test validator
+- [x] Schema zod profil (identitas)
+- [x] Schema zod pendidikan
+- [x] Schema zod pengalaman + bullet
+- [x] Schema zod skill, sertifikasi, bahasa
+- [x] Unit test validator
 
 **API**
-- [ ] `GET/PATCH /api/profile`
-- [ ] CRUD `/api/profile/educations`
-- [ ] CRUD `/api/profile/experiences` (+ `experience_points`)
-- [ ] CRUD `/api/profile/skills`
-- [ ] CRUD `/api/profile/certifications`
-- [ ] CRUD `/api/profile/languages`
-- [ ] Error mapping zod → field
+- [x] `GET/PATCH /api/profile` (+ `POST /api/profile/complete`)
+- [x] CRUD `/api/profile/educations`
+- [x] CRUD `/api/profile/experiences` (+ `experience_points`)
+- [x] CRUD `/api/profile/skills`
+- [x] CRUD `/api/profile/certifications`
+- [x] CRUD `/api/profile/languages`
+- [x] Error mapping zod → field
 
 **UI**
-- [ ] Wizard `/onboarding` per bagian
-- [ ] Autosave debounce + indikator tersimpan
-- [ ] Progress step (`profiles.onboarding_step`)
-- [ ] Halaman `/profile` (view + edit)
-- [ ] Editor bullet pengalaman (tambah/hapus/urutkan)
-- [ ] Uji RLS lintas user
+- [x] Wizard `/onboarding` per bagian
+- [x] Autosave debounce + indikator tersimpan
+- [x] Progress step (`profiles.onboarding_step`)
+- [x] Halaman `/profile` (view + edit)
+- [x] Editor bullet pengalaman (tambah/hapus/urutkan)
+- [x] Uji RLS lintas user
 
 ### M2 — CV PDF (Batch 1)
 
@@ -288,3 +288,4 @@ mengunduh CV PDF tanpa bergantung pada AI.
 |---|---|---|
 | 2026-11-12 | M0 | Task board dibuat; implementasi fondasi dimulai |
 | 2026-11-12 | M0 | Scaffold workspace, web, auth Supabase, migration `0001_phase1_schema`, tipe DB, logger PII. Verifikasi: lint/typecheck/test/build hijau, alur daftar→dashboard→logout→login diuji lewat browser, RLS diuji dengan dua akun. Docs (ADR-026, architecture, setup, privacy) disinkronkan. |
+| 2026-11-12 | M1 | Schema zod (`@lamarkerja/shared`), Route Handlers `/api/profile` + CRUD pendidikan/pengalaman(+poin)/skill/sertifikasi/bahasa, wizard `/onboarding` (autosave identitas 800ms + `onboarding_step`) dan `/profile`. Verifikasi Playwright: autosave bertahan setelah reload, reorder poin pengalaman, selesai onboarding → `/profile`, RLS lintas user pada seluruh tabel anak (0 baris terlihat, `404` pada mutasi lintas user). |
