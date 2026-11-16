@@ -12,6 +12,7 @@
     "start": "corepack pnpm --filter @lamarkerja/web start",
     "worker:dev": "corepack pnpm --filter @lamarkerja/workers dev",
     "worker:start": "corepack pnpm --filter @lamarkerja/workers start",
+    "db:seed": "corepack pnpm --filter @lamarkerja/workers seed",
     "lint": "eslint .",
     "typecheck": "corepack pnpm -r typecheck",
     "test": "vitest run",

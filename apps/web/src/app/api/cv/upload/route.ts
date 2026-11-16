@@ -6,6 +6,7 @@ import { dbErrorResponse, getApiContext, jsonError, unauthorized } from "@/lib/a
 import { recordAuditLog, requireConsent } from "@/lib/consent";
 import { loadUserUploadedCvs } from "@/lib/cv/data";
 import { extractCvText } from "@/lib/cv/extraction";
+import { CV_UPLOAD_WINDOW_MS, evaluateUploadRateLimit } from "@/lib/cv/rate-limit";
 import { removeCvFileQuietly, writeCvFile } from "@/lib/cv/storage";
 import { validateCvBuffer } from "@/lib/cv/validation";
 import { env } from "@/lib/env";
@@ -31,6 +32,37 @@ export async function POST(request: Request) {
   const consentCheck = await requireConsent(supabase, user.id, "cv_ai_processing");
   if (!consentCheck.ok) {
     return consentCheck.response;
+  }
+
+  const cutoffIso = new Date(Date.now() - CV_UPLOAD_WINDOW_MS).toISOString();
+  const { data: recentUploads, error: recentError } = await supabase
+    .from("uploaded_cvs")
+    .select("created_at")
+    .eq("user_id", user.id)
+    .gte("created_at", cutoffIso)
+    .order("created_at", { ascending: true })
+    .limit(env.CV_UPLOAD_MAX_PER_HOUR + 1);
+
+  if (recentError) return dbErrorResponse(recentError);
+
+  const rateLimit = evaluateUploadRateLimit({
+    timestamps: (recentUploads ?? []).map((row) => row.created_at),
+    maxUploads: env.CV_UPLOAD_MAX_PER_HOUR,
+  });
+
+  if (!rateLimit.allowed) {
+    logEvent("warn", "cv.upload_rate_limited", {
+      userId: user.id,
+      maxPerHour: env.CV_UPLOAD_MAX_PER_HOUR,
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
+    const response = jsonError(
+      429,
+      "RATE_LIMITED",
+      `Batas unggah CV (${env.CV_UPLOAD_MAX_PER_HOUR} berkas per jam) tercapai. Silakan coba lagi sebentar.`,
+    );
+    response.headers.set("Retry-After", String(rateLimit.retryAfterSeconds));
+    return response;
   }
 
   let formData: FormData;

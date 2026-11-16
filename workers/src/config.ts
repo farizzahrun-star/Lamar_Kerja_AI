@@ -9,6 +9,8 @@ export interface WorkerConfig {
   pollIntervalMs: number;
   batchSize: number;
   maxAttempts: number;
+  cvStorageDir: string;
+  cleanupIntervalMs: number;
 }
 
 function readInt(
@@ -52,5 +54,7 @@ export function readConfig(source: NodeJS.ProcessEnv = process.env): WorkerConfi
     pollIntervalMs: readInt(source, "WORKER_POLL_INTERVAL_MS", 5_000, { min: 250 }),
     batchSize: readInt(source, "WORKER_BATCH_SIZE", 3, { min: 1, max: 20 }),
     maxAttempts: readInt(source, "WORKER_MAX_ATTEMPTS", 2, { min: 1, max: 5 }),
+    cvStorageDir: (source.CV_STORAGE_DIR ?? "./data/cv").trim() || "./data/cv",
+    cleanupIntervalMs: readInt(source, "WORKER_CLEANUP_INTERVAL_MS", 3_600_000, { min: 1_000 }),
   };
 }

@@ -15,19 +15,24 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { CircuitBreaker } from "./circuit-breaker";
+import { cleanupExpiredCvs } from "./cleanup";
 import { readConfig, type WorkerConfig } from "./config";
 import { loadEnvFile } from "./env-file";
 import { createOllamaClient, type OllamaClient } from "./ollama";
 import { claimRun, processRun, skipAllPendingRuns, type ParseDeps } from "./parse";
 import { createWorkerSupabase, type WorkerSupabase } from "./supabase";
 
-export const JOBS = [{ name: "cv.parse", pollIntervalMs: 5_000 }] as const;
+export const JOBS = [
+  { name: "cv.parse", pollIntervalMs: 5_000 },
+  { name: "cv.cleanup", pollIntervalMs: 3_600_000 },
+] as const;
 
 export interface WorkerRuntime {
   config: WorkerConfig;
   supabase: WorkerSupabase;
   ollama: OllamaClient;
   breaker: CircuitBreaker;
+  lastCleanupAt: number;
 }
 
 export function createRuntime(config: WorkerConfig): WorkerRuntime {
@@ -41,6 +46,7 @@ export function createRuntime(config: WorkerConfig): WorkerRuntime {
       timeoutMs: config.ollamaTimeoutMs,
     }),
     breaker: new CircuitBreaker(),
+    lastCleanupAt: 0,
   };
 }
 
@@ -54,6 +60,16 @@ const log = (event: string, data?: Record<string, unknown>) => {
  * Satu iterasi loop. Diekspor agar bisa diuji tanpa menjalankan proses panjang.
  */
 export async function runOnce(runtime: WorkerRuntime): Promise<boolean> {
+  const nowMs = Date.now();
+  if (nowMs - runtime.lastCleanupAt >= runtime.config.cleanupIntervalMs) {
+    runtime.lastCleanupAt = nowMs;
+    await cleanupExpiredCvs({
+      supabase: runtime.supabase,
+      cvStorageDir: runtime.config.cvStorageDir,
+      log,
+    });
+  }
+
   const deps: ParseDeps = {
     supabase: runtime.supabase,
     ollama: runtime.ollama,

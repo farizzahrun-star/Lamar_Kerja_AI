@@ -29,10 +29,13 @@ Baca dengan urutan ini:
 
 ```text
 VM Oracle (Always Free, 4 OCPU / 24 GB)
-  web       Next.js  -> UI + API + endpoint Runner
-  worker    pg-boss  -> matching, cv.parse, prepare draft, email, cv.cleanup
-  db        Postgres -> data + queue + pgvector
-  ollama    qwen3:4b -> CV parsing (opt-in + consent) & draft (CPU, mem_limit 5g)
+  web       Next.js   -> UI + API + endpoint Runner
+  worker    Node      -> cv.parse, cv.cleanup, matching, prepare draft, email
+  ollama    qwen3:4b  -> CV parsing (opt-in + consent) & draft (CPU, mem_limit 5g)
+
+Supabase (Managed, ADR-026)
+  auth      Supabase Auth (@supabase/ssr)
+  postgres  Data aplikasi + RLS + antrean + pgvector
 
 Laptop/PC Tim (IP residensial)
   runner    Playwright -> scraping guest (Stage 1) + portal apply (Stage 4b)
@@ -56,13 +59,12 @@ Prasyarat: Node.js 22, pnpm, Docker, Git.
 git clone <repo>
 cd Lamar_Kerja_AI
 cp .env.example .env
+cp .env.example apps/web/.env.local
+# isi SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, SUPABASE_JWKS_URL
 pnpm install
-docker compose -f infrastructure/docker-compose.yml up -d db ollama
-docker compose -f infrastructure/docker-compose.yml exec ollama ollama pull qwen3:4b
-pnpm db:migrate
-pnpm db:seed          # data contoh, bukan data produksi
+pnpm db:seed          # kandidat sintetis (demo.kandidat@lamarkerja.local), bukan data produksi
 pnpm dev              # http://localhost:3000
-pnpm worker:dev       # terminal terpisah
+pnpm worker:dev       # terminal terpisah (cv.parse & cv.cleanup)
 ```
 
 Verifikasi:
@@ -85,22 +87,18 @@ Verifikasi:
 | Halaman onboarding | `apps/web/src/app/(app)/onboarding` |
 | Layout dashboard | `apps/web/src/app/(app)` |
 | API profil | `apps/web/src/app/api/profile` |
-| API Runner (claim/report task) | `apps/web/src/app/api/runner` |
-| Local Runner (Playwright) | `apps/runner/src` |
-| Adapter scraping guest | `apps/runner/src/scrapers` |
-| Adapter portal apply | `apps/runner/src/portals` |
-| Template CV | `packages/pdf/templates` |
-| Renderer PDF | `packages/pdf` |
-| Skor kecocokan | `packages/matching` |
-| Worker discovery / ingest | `workers/src/discovery` |
-| Worker CV parsing (`cv.parse`, `cv.cleanup`) | `workers/src/cv-parser` |
-| Worker draft (`application.prepare`) | `workers/src/generator` |
-| Worker email (`email.send`) | `workers/src/sender` |
-| Adapter Ollama & schema ekstraksi | `packages/ai` |
-| Schema database | `packages/db/schema` |
-| Migration | `packages/db/migrations` |
-| Prompt | `prompts/` |
-| Konstanta bersama | `packages/shared` |
+| API consent & CV upload/review | `apps/web/src/app/api/consent`, `apps/web/src/app/api/cv` |
+| Halaman CV, upload, dan review saran AI | `apps/web/src/app/(app)/profile/cv` & `apps/web/src/components/cv` |
+| Template CV & renderer PDF (`@react-pdf/renderer`) | `apps/web/src/components/resume` & `apps/web/src/app/api/resumes` |
+| Logika merge & dedupe saran CV | `apps/web/src/lib/cv/merge.ts` |
+| Worker `cv.parse`, `cv.cleanup`, & Ollama | `workers/src/parse.ts`, `workers/src/cleanup.ts`, `workers/src/ollama.ts` |
+| Prompt & schema ekstraksi CV | `workers/src/prompts.ts` & `workers/src/sections.ts` |
+| Fixture & seed kandidat sintetis | `workers/src/fixtures.ts` & `workers/src/seed.ts` |
+| Tipe database Supabase | `packages/db/src/types.ts` |
+| Migration SQL | `migrations/` |
+| Schema validasi & konstanta bersama | `packages/shared/src` |
+| API Runner (claim/report task, Phase 2) | `apps/web/src/app/api/runner` |
+| Local Runner Playwright (Phase 2 & 6) | `apps/runner/src` |
 | Deploy | `infrastructure/` |
 
 ## 5. Eksplorasi Codebase
@@ -308,11 +306,11 @@ Tidak perlu ADR untuk perbaikan bug atau perubahan UI kecil.
 | 2 | Baca workflow + arsitektur + decisions + privacy |
 | 3 | Eksplorasi kode dengan codebase-memory |
 | 4 | Ubah satu hal kecil di UI profil/review CV dan buka PR (Phase 1) |
-| 5 | Pelajari schema database (`packages/db/schema`), consent, dan migration |
-| 6 | Pelajari pipeline `cv.parse`, `packages/ai`, dan fallback manual (Phase 1) |
+| 5 | Pelajari schema database (`migrations/0001_phase1_schema.sql`), RLS, consent, dan tipe (`packages/db`) |
+| 6 | Pelajari pipeline `cv.parse`, `cv.cleanup`, `workers/src`, dan fallback manual (Phase 1) |
 | 7 | Pelajari Local Runner (`apps/runner`), scraping guest, dan normalizer (Phase 2) |
 | 8 | Pelajari rules matching dan breakdown skor (Phase 3) |
-| 9 | Pelajari template CV dan renderer PDF (`packages/pdf`) |
+| 9 | Pelajari template CV dan renderer PDF (`apps/web/src/components/resume`) |
 | 10 | Pelajari draft generator, `portal_answers`, dan alur review (Phase 4) |
 | 11 | Pelajari adapter email (Gmail API) dan tracking (Phase 5) |
 | 12 | Pelajari adapter portal apply Playwright + CV parsing v2 (Phase 6) |
@@ -321,11 +319,13 @@ Tidak perlu ADR untuk perbaikan bug atau perubahan UI kecil.
 
 ## 12. FAQ dan Troubleshooting
 
-**Database tidak bisa connect.**
-Pastikan container `db` berjalan dan `DATABASE_URL` sesuai.
+**Database / Supabase tidak bisa dihubungi.**
+Pastikan `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, dan `SUPABASE_SECRET_KEY`
+terisi di `.env` serta `apps/web/.env.local`, dan project Supabase aktif.
 
 **Worker tidak memproses task.**
-Cek `pnpm worker:dev` berjalan, koneksi database sama, dan schema `pgboss` ada.
+Cek `pnpm worker:dev` berjalan, `SUPABASE_SECRET_KEY` terisi di `.env`, dan
+terdapat baris `cv_parse_runs` berstatus `pending`.
 
 **Draft lama atau tidak muncul.**
 Periksa `AI_ENABLED`. Jika `true` tetapi Ollama mati, sistem harus fallback ke

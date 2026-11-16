@@ -146,22 +146,22 @@ mengunduh CV PDF tanpa bergantung pada AI.
 
 ### M4 — Cleanup & Hardening (Batch 2)
 
-- [ ] Worker `cv.cleanup` (file > 30 hari)
-- [ ] Rate limit upload
-- [ ] Path traversal guard
-- [ ] Audit log (consent, upload, accept suggestion)
-- [ ] Seed script fixture sintetis
-- [ ] Update `setup.md`, `architecture.md`, `team-onboarding.md`, README
+- [x] Worker `cv.cleanup` (file > 30 hari)
+- [x] Rate limit upload
+- [x] Path traversal guard
+- [x] Audit log (consent, upload, accept suggestion)
+- [x] Seed script fixture sintetis
+- [x] Update `setup.md`, `architecture.md`, `team-onboarding.md`, README
 
 **Verifikasi Phase 1**
 - [x] Register/login/logout + session persist
 - [x] Onboarding autosave bertahan setelah reload
 - [x] CV A/B preview & download, versioning benar
-- [ ] Upload tanpa consent → 403
-- [ ] PDF scan → `skipped` tanpa memanggil Ollama
-- [ ] Ollama mati → `failed`, form manual tetap jalan
-- [ ] `cv.cleanup` menghapus file kedaluwarsa
-- [ ] Log bebas PII
+- [x] Upload tanpa consent → 403
+- [x] PDF scan → `skipped` tanpa memanggil Ollama
+- [x] Ollama mati → `failed`, form manual tetap jalan
+- [x] `cv.cleanup` menghapus file kedaluwarsa
+- [x] Log bebas PII
 
 ---
 
@@ -293,3 +293,4 @@ mengunduh CV PDF tanpa bergantung pada AI.
 | 2026-11-16 | M3 (Upload) | `POST/GET /api/cv/upload` dengan gate consent, validasi magic bytes (`%PDF-`, OpenXML ZIP) + sha256 + batas 10 MB, penyimpanan `CV_STORAGE_DIR/<user_id>/<uuid>.<ext>` dengan guard traversal, ekstraksi teks `pdfjs-dist/legacy` (PDF) & `mammoth` (DOCX), normalisasi teks (`\u0000`, kontrol, whitespace, baris kosong), deteksi scan (< 50 karakter → `skipped`), pengantrean 4 `cv_parse_runs` (`identity`/`experiences`/`educations`/`skills`) bila `AI_ENABLED=true`, komponen `CvUploadCard` (drag & drop + riwayat + retensi 30 hari) di `/onboarding` & `/profile`, serta `audit_log` `cv.uploaded`. |
 | 2026-11-16 | M3 (Worker `cv.parse`) | Worker TypeScript (`workers/src`) dengan loader `.env`, klien Supabase secret key, loop polling `cv_parse_runs` + klaim optimistis (`status= pending` + `attempts`), klien Ollama (`think:false`, JSON Schema via `format`, timeout 180s, parse JSON berpagar kode), prompt versioned `2026-11-16.v1` per bagian, validasi zod + repair 1×, grounding `source_snippet` (buang saran halusinasi), simpan `cv_parse_suggestions` idempoten, cek ulang consent sebelum proses (`CONSENT_REVOKED`/`CONSENT_OUTDATED`), skip `NO_EXTRACTABLE_TEXT`/`CV_EXPIRED`, retry `WORKER_MAX_ATTEMPTS` lalu `failed`, circuit breaker 3 gagal/5 menit → jeda 10 menit, dan `WORKER_ONCE=true` untuk uji satu iterasi. Verifikasi: 80 unit test hijau + smoke test nyata terhadap Ollama lokal untuk 4 bagian (identity 6, experiences 2, educations 1, skills 5 saran, semua `parsed`). |
 | 2026-11-16 | M3 (Review & Fallback) | `planMerges` (`apps/web/src/lib/cv/merge.ts`) untuk normalisasi URL, patch identitas, insert pengalaman/pendidikan/skill, dan dedupe case-insensitive terhadap profil maupun batch yang sama; loader `loadCvReviewData` + `countPendingSuggestions`; endpoint `POST /api/cv/review/decisions` (accept/reject, update status via admin client, `audit_log` `cv.suggestion.accepted`/`rejected`); halaman `/profile/cv/review` dengan diff per field, skor confidence, `source_snippet`, terima/tolak per field, per bagian, dan semua, serta peringatan fallback ketika run `failed`/`skipped`; banner saran pending di `/profile/cv` dan tautan dari `CvUploadCard`. Verifikasi: 88 unit test + Playwright e2e (`check-m3-review.mjs`) memastikan reject per field, accept-all, dedupe, dan audit log. |
+| 2026-11-16 | M4 (Cleanup & Hardening) | Worker `cv.cleanup` (`workers/src/cleanup.ts`) yang menghapus berkas & baris `uploaded_cvs` lewat `delete_after` (retensi 30 hari / consent dicabut) dengan guard `resolveSafeCvPath` dan audit log `cv.cleanup`; rate limit unggah CV per user 1 jam bergulir (`evaluateUploadRateLimit`, `CV_UPLOAD_MAX_PER_HOUR`, `429 RATE_LIMITED` + `Retry-After`); fixture & seed kandidat sintetis idempoten (`pnpm db:seed` → `workers/src/seed.ts`, `demo.kandidat@lamarkerja.local`); sinkronisasi `.env.example`, `docs/setup.md`, `docs/architecture.md`, `docs/team-onboarding.md`, dan `README.md`. Verifikasi: 97 unit test hijau, `typecheck` & `lint` bersih, serta e2e `check-m4.mjs` selesai (Phase 1 tuntas). |

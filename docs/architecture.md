@@ -104,9 +104,11 @@ menjelaskan komponen teknis yang menjalankannya.
 
 Worker berjalan sebagai proses Node terpisah dan memakai secret key Supabase
 (bypass RLS) untuk membaca serta menulis tabel antrean. Phase 1 memakai polling
-`cv_parse_runs`; pg-boss ditambahkan saat job membutuhkan retry terjadwal dan
-volume tinggi. Worker memakai retry dengan backoff, idempotency key per task,
-dan dead-letter queue.
+`cv_parse_runs` serta pengecekan berkala `uploaded_cvs.delete_after` melalui
+`cv.cleanup` (interval default 1 jam, plus langsung jalan saat `WORKER_ONCE=true`);
+pg-boss ditambahkan saat job membutuhkan retry terjadwal dan volume tinggi.
+Worker memakai retry dengan backoff, idempotency key per task, dan dead-letter
+queue.
 
 ### Local Runner
 
@@ -465,9 +467,16 @@ Skor adalah ranking awal, bukan keputusan otomatis.
 - Server tidak menyimpan password atau cookie platform; sesi login hanya ada di
   profil browser lokal Runner.
 - Profil browser Runner berada di disk perangkat user; disarankan enkripsi disk.
-- Rate limit pada login, persiapan antrean, dan pengiriman email.
+- Rate limit pada login, unggah CV (`CV_UPLOAD_MAX_PER_HOUR`, default 5 berkas
+  per user per jam → `429 RATE_LIMITED` + `Retry-After`), persiapan antrean, dan
+  pengiriman email.
+- Guard path traversal (`resolveSafeCvPath`) pada penyimpanan dan penghapusan
+  berkas CV maupun resume PDF, hanya mengizinkan berkas di bawah direktori
+  milik user terkait.
 - Kill switch global untuk scraping, email, dan portal.
-- Semua perubahan status masuk `tracking_events` dan `audit_log`.
+- Semua perubahan status dan aksi sensitif (`consent.granted`, `consent.revoked`,
+  `cv.uploaded`, `cv.suggestion.accepted`, `cv.suggestion.rejected`, `cv.cleanup`)
+  masuk `tracking_events` dan `audit_log`.
 - Log tidak memuat isi CV, token, atau alamat email lengkap.
 - Data di Supabase dilindungi RLS per user; secret key hanya ada di server dan
   tidak pernah dikirim ke browser.

@@ -65,24 +65,19 @@ Detail lengkap alur ada di [docs/workflow.md](docs/workflow.md).
 
 ```text
 apps/
-  web/           Dashboard, interface Next.js 15, dan API internal
-  runner/        Local Runner (Playwright) untuk scraping guest & portal apply
+  web/           Dashboard, interface Next.js 15, renderer CV PDF, dan Route Handlers
+  runner/        Local Runner (Playwright) untuk scraping guest & portal apply (Phase 2 & 6)
 
 workers/
-  discovery/     Ingest lowongan, deduplikasi, dan pembuatan snapshot H-1
-  generator/     Analisis lowongan, penyiapan draft, dan jawaban form
-  sender/        Pengiriman email (Gmail API) dan sinkronisasi reply
+  src/           Worker polling Supabase (cv.parse via Ollama qwen3:4b, cv.cleanup, seed sintetis)
 
 packages/
-  ai/            Adapter Ollama lokal (qwen3:4b, CPU-only) untuk parsing CV (consent) dan draf
-  matching/      Rules-based matching profil-lowongan (40/25/15/10/10)
-  pdf/           Renderer CV PDF (@react-pdf/renderer)
-  email/         Adapter Gmail API (OAuth)
-  db/            Schema database Drizzle ORM, migration, dan client
+  db/            Tipe TypeScript database Supabase (generated)
+  shared/        Schema validasi zod, konstanta domain, dan helper bersama
 
-prompts/         Prompt AI versioned
+migrations/      Migration SQL Supabase Postgres + kebijakan RLS
 docs/            Dokumentasi lengkap pengembangan
-infrastructure/  Docker Compose, Caddy, dan script backup
+infrastructure/  Docker Compose, Caddy, dan script deploy
 ```
 
 ## Dokumentasi
@@ -93,15 +88,15 @@ infrastructure/  Docker Compose, Caddy, dan script backup
 - [Panduan setup & Local Runner](docs/setup.md) — Menjalankan web, worker, runner, dan deploy
 - [Roadmap pengembangan](docs/roadmap.md) — Rencana bertahap Phase 0 sampai Phase 7
 - [Kebijakan privasi data](docs/privacy.md) — Aturan perlindungan data kandidat
-- [Log keputusan arsitektur (ADR)](docs/decisions.md) — ADR-001 hingga ADR-023
+- [Log keputusan arsitektur (ADR)](docs/decisions.md) — ADR-001 hingga ADR-026
 - [Panduan onboarding tim](docs/team-onboarding.md) — Checklist hari pertama dan aturan akses
 - [Panduan evaluasi model](docs/evaluation.md) — Pengukuran kualitas matching dan draft
 - [Panduan training model AI](docs/ai-training.md) — Eksperimen model lokal (Phase 7)
 
 ## Urutan Fase Pengembangan
 
-1. **Phase 0: Fondasi** — Scaffold monorepo, PostgreSQL, schema awal, dan autentikasi.
-2. **Phase 1: Profil dan CV** — Onboarding profil kandidat lengkap dan generator CV PDF.
+1. **Phase 0: Fondasi** — Scaffold monorepo, Supabase Auth + Postgres (RLS), schema awal, dan healthcheck.
+2. **Phase 1: Profil dan CV** — Onboarding & CRUD profil lengkap, generator CV PDF (Template A/B), unggah CV + consent terversi, parsing CV via Ollama lokal (`cv.parse`), halaman review diff, dan pembersihan berkas (`cv.cleanup`).
 3. **Phase 2: Tahap 1 & 2 (Scraping Guest & Pemilihan)** — Local Runner Playwright (10/platform/hari), ingest H-1, dan antrean pilihan user.
 4. **Phase 3: Matching** — Rules-based matching (skor 0-100 dengan bobot 40/25/15/10/10).
 5. **Phase 4: Tahap 3 (Antrean Persiapan)** — Template draft, `portal_answers`, dan alur review/approval.

@@ -73,7 +73,8 @@ pnpm worker:start   # satu proses tanpa watch
 ```
 
 Worker memakai `SUPABASE_URL` + `SUPABASE_SECRET_KEY` untuk polling tabel
-antrean (Phase 1: `cv_parse_runs`), jadi tidak memerlukan `DATABASE_URL`.
+antrean (Phase 1: `cv_parse_runs` + pembersihan `uploaded_cvs` yang melewati
+`delete_after` melalui `cv.cleanup`), jadi tidak memerlukan `DATABASE_URL`.
 Worker memuat `.env` di root repo secara otomatis.
 
 Variabel yang relevan:
@@ -87,13 +88,28 @@ Variabel yang relevan:
 | `OLLAMA_TIMEOUT_MS` | `180000` | Batas waktu satu panggilan |
 | `WORKER_POLL_INTERVAL_MS` | `5000` | Jeda polling saat antrean kosong |
 | `WORKER_MAX_ATTEMPTS` | `2` | Batas percobaan per run sebelum `failed` |
-| `WORKER_ONCE` | `false` | `true` memproses satu iterasi lalu keluar (untuk uji manual/cron) |
+| `WORKER_CLEANUP_INTERVAL_MS` | `3600000` | Jeda pengecekan `cv.cleanup` (retensi 30 hari / consent dicabut) |
+| `WORKER_ONCE` | `false` | `true` memproses satu iterasi (`cv.cleanup` + satu batch `cv.parse`) lalu keluar |
+| `CV_UPLOAD_MAX_PER_HOUR` | `5` | Batas unggah CV per user dalam jendela bergulir 1 jam (`429 RATE_LIMITED`) |
 
 Contoh uji manual satu iterasi:
 
 ```bash
 WORKER_ONCE=true pnpm worker:start
 ```
+
+### Seed Data Sintetis
+
+Untuk mengisi satu kandidat sintetis (`demo.kandidat@lamarkerja.local`) beserta
+profil lengkap, consent aktif, contoh CV, dan satu saran pending di halaman
+review:
+
+```bash
+pnpm db:seed
+```
+
+Script ini idempoten dan hanya memakai fixture fiktif di
+`workers/src/fixtures.ts` (tanpa data kandidat atau perusahaan nyata).
 
 ### Menjalankan Local Runner
 
@@ -253,7 +269,9 @@ BACKUP_ENCRYPTION_KEY=
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | Typecheck semua package |
 | `pnpm test` | Unit test |
-| `pnpm worker:dev` | Jalankan worker (M3) |
+| `pnpm worker:dev` | Jalankan worker (`cv.parse` & `cv.cleanup`) |
+| `pnpm worker:start` | Jalankan worker sekali tanpa watch (`WORKER_ONCE=true` untuk 1 iterasi) |
+| `pnpm db:seed` | Seed kandidat sintetis untuk pengembangan lokal |
 | `pnpm test:e2e` | End-to-end test (belum tersedia) |
 
 Migration tidak lewat script npm: terapkan SQL di `migrations/` memakai Supabase
