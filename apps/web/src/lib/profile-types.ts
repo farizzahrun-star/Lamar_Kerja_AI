@@ -22,6 +22,39 @@ export type ResumeListItem = Pick<
   ResumeRow,
   "id" | "version" | "template" | "created_at" | "application_id"
 >;
+export type ConsentRow = Database["public"]["Tables"]["user_consents"]["Row"];
+export type UploadedCvRow = Database["public"]["Tables"]["uploaded_cvs"]["Row"];
+export type UploadedCvItem = Pick<
+  UploadedCvRow,
+  | "id"
+  | "original_filename"
+  | "mime"
+  | "size_bytes"
+  | "status"
+  | "created_at"
+  | "delete_after"
+> & {
+  hasText: boolean;
+  charCount: number;
+  parseRunsQueued?: number;
+  message?: string;
+};
+
+export interface ConsentStatus {
+  kind: ConsentRow["kind"];
+  requiredVersion: string;
+  active: boolean;
+  reason: "ok" | "missing" | "revoked" | "outdated";
+  consent: Pick<ConsentRow, "id" | "kind" | "version" | "accepted_at" | "revoked_at"> | null;
+}
+
+export interface ConsentRevokeResult {
+  kind: ConsentRow["kind"];
+  revoked_at: string;
+  cancelled_runs: number;
+  deleted_suggestions: number;
+  scheduled_files: number;
+}
 
 export interface ProfileBundle {
   profile: ProfileRow;

@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { CvAssistantSection } from "@/components/cv/cv-assistant-section";
 import { ProfileEditor } from "@/components/profile/profile-editor";
 import { requireUser } from "@/lib/auth";
+import { getConsentStatus } from "@/lib/consent";
+import { loadUserUploadedCvs } from "@/lib/cv/data";
 import { loadProfileBundle } from "@/lib/profile-data";
 import { createClient } from "@/lib/supabase/server";
 
@@ -11,7 +14,11 @@ export const metadata: Metadata = { title: "Onboarding" };
 export default async function OnboardingPage() {
   const user = await requireUser();
   const supabase = await createClient();
-  const bundle = await loadProfileBundle(supabase, user.id);
+  const [bundle, consentStatus, uploadedCvs] = await Promise.all([
+    loadProfileBundle(supabase, user.id),
+    getConsentStatus(supabase, user.id),
+    loadUserUploadedCvs(supabase, user.id),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -31,6 +38,8 @@ export default async function OnboardingPage() {
           Buka tampilan lengkap →
         </Link>
       </header>
+
+      <CvAssistantSection initialConsent={consentStatus} initialUploadedCvs={uploadedCvs} />
 
       <ProfileEditor initialBundle={bundle} mode="wizard" />
     </div>

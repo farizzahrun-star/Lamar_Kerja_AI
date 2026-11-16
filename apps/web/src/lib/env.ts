@@ -15,6 +15,11 @@ const envSchema = z.object({
   CV_AI_CONSENT_VERSION: z.string().min(1).default("2026-11-06.v1"),
   CV_STORAGE_DIR: z.string().min(1).default("./data/cv"),
   RESUME_STORAGE_DIR: z.string().min(1).default("./data/resumes"),
+  AI_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value !== "false"),
+  OLLAMA_MODEL: z.string().min(1).default("qwen3:4b"),
 });
 
 const parsed = envSchema.safeParse(process.env);

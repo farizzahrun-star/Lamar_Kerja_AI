@@ -6,7 +6,7 @@ yang bisa dicentang.
 
 **Legenda:** `[ ]` belum · `[x]` selesai · `[!]` terblokir (lihat catatan)
 
-**Status saat ini:** Batch 1 (M0 + M1 + M2) selesai. Siap lanjut ke Batch 2 (M3 + M4).
+**Status saat ini:** Batch 2 dimulai — M3 bagian **Consent** selesai, lanjut ke **Upload CV**, **Worker `cv.parse`**, **Review**, dan **Fallback**.
 
 ---
 
@@ -115,16 +115,16 @@ mengunduh CV PDF tanpa bergantung pada AI.
 ### M3 — Upload CV, Consent, Parsing (Batch 2)
 
 **Consent**
-- [ ] UI checkbox consent terpisah dari ToS
-- [ ] `POST /api/consent` + `DELETE /api/consent/cv_ai_processing`
-- [ ] Helper `requireConsent` → `403 CONSENT_REQUIRED`
-- [ ] Revoke: batalkan run, hapus suggestions, jadwalkan hapus file
+- [x] UI checkbox consent terpisah dari ToS
+- [x] `POST /api/consent` + `DELETE /api/consent/cv_ai_processing`
+- [x] Helper `requireConsent` → `403 CONSENT_REQUIRED`
+- [x] Revoke: batalkan run, hapus suggestions, jadwalkan hapus file
 
 **Upload**
-- [ ] `POST /api/cv/upload` (PDF/DOCX ≤ 10 MB, magic bytes, sha256)
-- [ ] Penyimpanan `CV_STORAGE_DIR/<user_id>/<uuid>`
-- [ ] Ekstraksi teks `pdfjs-dist` (PDF) + `mammoth` (DOCX)
-- [ ] Normalisasi teks + deteksi PDF scan (`skipped`)
+- [x] `POST /api/cv/upload` (PDF/DOCX ≤ 10 MB, magic bytes, sha256)
+- [x] Penyimpanan `CV_STORAGE_DIR/<user_id>/<uuid>`
+- [x] Ekstraksi teks `pdfjs-dist` (PDF) + `mammoth` (DOCX)
+- [x] Normalisasi teks + deteksi PDF scan (`skipped`)
 
 **Worker `cv.parse`**
 - [ ] Worker polling `cv_parse_runs` via secret key
@@ -289,3 +289,5 @@ mengunduh CV PDF tanpa bergantung pada AI.
 | 2026-11-12 | M0 | Scaffold workspace, web, auth Supabase, migration `0001_phase1_schema`, tipe DB, logger PII. Verifikasi: lint/typecheck/test/build hijau, alur daftar→dashboard→logout→login diuji lewat browser, RLS diuji dengan dua akun. Docs (ADR-026, architecture, setup, privacy) disinkronkan. |
 | 2026-11-12 | M1 | Schema zod (`@lamarkerja/shared`), Route Handlers `/api/profile` + CRUD pendidikan/pengalaman(+poin)/skill/sertifikasi/bahasa, wizard `/onboarding` (autosave identitas 800ms + `onboarding_step`) dan `/profile`. Verifikasi Playwright: autosave bertahan setelah reload, reorder poin pengalaman, selesai onboarding → `/profile`, RLS lintas user pada seluruh tabel anak (0 baris terlihat, `404` pada mutasi lintas user). |
 | 2026-11-12 | M2 | Template A (fresh graduate) & B (berpengalaman) dengan `@react-pdf/renderer` (A4 tanpa Chromium), penyimpanan `RESUME_STORAGE_DIR` + guard path traversal, `GET/POST /api/resumes` (versioning per user + snapshot `data_json`), `GET /api/resumes/:id/file` (inline/attachment + kepemilikan RLS), halaman `/profile/cv` (pilih template, preview iframe, unduh, riwayat versi). Unit test profil kosong/parsial/lengkap + ekstraksi teks PDF, serta verifikasi e2e Playwright lintas user. |
+| 2026-11-12 | M3 (Consent) | Schema & teks kanonik `CV_AI_CONSENT_TEXT`, evaluator `evaluateConsentRecord` + `hashUserAgent` (SHA-256), helper server `requireConsent` (`403 CONSENT_REQUIRED`), endpoint `GET/POST /api/consent` & `GET/DELETE /api/consent/[kind]`, komponen `AiConsentCard` (checkbox opt-in terpisah dari ToS, default kosong) pada `/onboarding` & `/profile`, serta kaskade pencabutan (batalkan `cv_parse_runs`, hapus `cv_parse_suggestions`, jadwalkan hapus `uploaded_cvs`, catat `audit_log`). |
+| 2026-11-16 | M3 (Upload) | `POST/GET /api/cv/upload` dengan gate consent, validasi magic bytes (`%PDF-`, OpenXML ZIP) + sha256 + batas 10 MB, penyimpanan `CV_STORAGE_DIR/<user_id>/<uuid>.<ext>` dengan guard traversal, ekstraksi teks `pdfjs-dist/legacy` (PDF) & `mammoth` (DOCX), normalisasi teks (`\u0000`, kontrol, whitespace, baris kosong), deteksi scan (< 50 karakter → `skipped`), pengantrean 4 `cv_parse_runs` (`identity`/`experiences`/`educations`/`skills`) bila `AI_ENABLED=true`, komponen `CvUploadCard` (drag & drop + riwayat + retensi 30 hari) di `/onboarding` & `/profile`, serta `audit_log` `cv.uploaded`. |

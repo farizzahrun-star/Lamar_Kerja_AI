@@ -224,6 +224,20 @@ export const createResumeSchema = z.object({
 });
 export type CreateResumeInput = z.input<typeof createResumeSchema>;
 
+export const CONSENT_KIND_VALUES = ["privacy", "cv_ai_processing", "ai_training_opt_in"] as const;
+export const consentKindSchema = z.enum(CONSENT_KIND_VALUES, {
+  message: "Jenis persetujuan tidak valid.",
+});
+
+export const consentGrantSchema = z.object({
+  kind: consentKindSchema.default("cv_ai_processing"),
+  accepted: z.literal(true, {
+    message: "Persetujuan harus dicentang secara eksplisit.",
+  }),
+  version: z.string().trim().min(1).max(60).optional(),
+});
+export type ConsentGrantInput = z.input<typeof consentGrantSchema>;
+
 export type IdentityValues = z.output<typeof identitySchema>;
 export type IdentityPatchValues = z.output<typeof identityPatchSchema>;
 export type EducationValues = z.output<typeof educationSchema>;

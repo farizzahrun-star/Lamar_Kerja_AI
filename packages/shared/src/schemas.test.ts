@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   certificationSchema,
+  consentGrantSchema,
   createResumeSchema,
   educationSchema,
   experienceSchema,
@@ -158,5 +159,16 @@ describe("schema sederhana", () => {
     expect(createResumeSchema.parse({ template: "A" }).template).toBe("A");
     expect(createResumeSchema.parse({ template: "B" }).template).toBe("B");
     expect(createResumeSchema.safeParse({ template: "C" }).success).toBe(false);
+  });
+
+  it("consentGrantSchema mewajibkan accepted=true secara eksplisit", () => {
+    const parsed = consentGrantSchema.parse({ accepted: true });
+    expect(parsed.kind).toBe("cv_ai_processing");
+    expect(parsed.accepted).toBe(true);
+
+    expect(consentGrantSchema.safeParse({ accepted: false }).success).toBe(false);
+    expect(
+      consentGrantSchema.safeParse({ kind: "unknown", accepted: true }).success,
+    ).toBe(false);
   });
 });
