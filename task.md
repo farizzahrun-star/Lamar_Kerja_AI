@@ -135,14 +135,14 @@ mengunduh CV PDF tanpa bergantung pada AI.
 - [x] Circuit breaker 3 gagal/5 menit → jeda 10 menit
 
 **Review**
-- [ ] Halaman review diff per field
-- [ ] Accept/reject per field, per bagian, dan semua
-- [ ] Merge ke profil (dedupe pengalaman/skill)
-- [ ] Tidak ada jalur otomatis model → `profiles`
+- [x] Halaman review diff per field
+- [x] Accept/reject per field, per bagian, dan semua
+- [x] Merge ke profil (dedupe pengalaman/skill)
+- [x] Tidak ada jalur otomatis model → `profiles`
 
 **Fallback**
-- [ ] Ollama offline/timeout/JSON invalid → `failed` + form manual
-- [ ] `AI_ENABLED=false` → parsing dilewati
+- [x] Ollama offline/timeout/JSON invalid → `failed` + form manual
+- [x] `AI_ENABLED=false` → parsing dilewati
 
 ### M4 — Cleanup & Hardening (Batch 2)
 
@@ -292,3 +292,4 @@ mengunduh CV PDF tanpa bergantung pada AI.
 | 2026-11-12 | M3 (Consent) | Schema & teks kanonik `CV_AI_CONSENT_TEXT`, evaluator `evaluateConsentRecord` + `hashUserAgent` (SHA-256), helper server `requireConsent` (`403 CONSENT_REQUIRED`), endpoint `GET/POST /api/consent` & `GET/DELETE /api/consent/[kind]`, komponen `AiConsentCard` (checkbox opt-in terpisah dari ToS, default kosong) pada `/onboarding` & `/profile`, serta kaskade pencabutan (batalkan `cv_parse_runs`, hapus `cv_parse_suggestions`, jadwalkan hapus `uploaded_cvs`, catat `audit_log`). |
 | 2026-11-16 | M3 (Upload) | `POST/GET /api/cv/upload` dengan gate consent, validasi magic bytes (`%PDF-`, OpenXML ZIP) + sha256 + batas 10 MB, penyimpanan `CV_STORAGE_DIR/<user_id>/<uuid>.<ext>` dengan guard traversal, ekstraksi teks `pdfjs-dist/legacy` (PDF) & `mammoth` (DOCX), normalisasi teks (`\u0000`, kontrol, whitespace, baris kosong), deteksi scan (< 50 karakter → `skipped`), pengantrean 4 `cv_parse_runs` (`identity`/`experiences`/`educations`/`skills`) bila `AI_ENABLED=true`, komponen `CvUploadCard` (drag & drop + riwayat + retensi 30 hari) di `/onboarding` & `/profile`, serta `audit_log` `cv.uploaded`. |
 | 2026-11-16 | M3 (Worker `cv.parse`) | Worker TypeScript (`workers/src`) dengan loader `.env`, klien Supabase secret key, loop polling `cv_parse_runs` + klaim optimistis (`status= pending` + `attempts`), klien Ollama (`think:false`, JSON Schema via `format`, timeout 180s, parse JSON berpagar kode), prompt versioned `2026-11-16.v1` per bagian, validasi zod + repair 1×, grounding `source_snippet` (buang saran halusinasi), simpan `cv_parse_suggestions` idempoten, cek ulang consent sebelum proses (`CONSENT_REVOKED`/`CONSENT_OUTDATED`), skip `NO_EXTRACTABLE_TEXT`/`CV_EXPIRED`, retry `WORKER_MAX_ATTEMPTS` lalu `failed`, circuit breaker 3 gagal/5 menit → jeda 10 menit, dan `WORKER_ONCE=true` untuk uji satu iterasi. Verifikasi: 80 unit test hijau + smoke test nyata terhadap Ollama lokal untuk 4 bagian (identity 6, experiences 2, educations 1, skills 5 saran, semua `parsed`). |
+| 2026-11-16 | M3 (Review & Fallback) | `planMerges` (`apps/web/src/lib/cv/merge.ts`) untuk normalisasi URL, patch identitas, insert pengalaman/pendidikan/skill, dan dedupe case-insensitive terhadap profil maupun batch yang sama; loader `loadCvReviewData` + `countPendingSuggestions`; endpoint `POST /api/cv/review/decisions` (accept/reject, update status via admin client, `audit_log` `cv.suggestion.accepted`/`rejected`); halaman `/profile/cv/review` dengan diff per field, skor confidence, `source_snippet`, terima/tolak per field, per bagian, dan semua, serta peringatan fallback ketika run `failed`/`skipped`; banner saran pending di `/profile/cv` dan tautan dari `CvUploadCard`. Verifikasi: 88 unit test + Playwright e2e (`check-m3-review.mjs`) memastikan reject per field, accept-all, dedupe, dan audit log. |

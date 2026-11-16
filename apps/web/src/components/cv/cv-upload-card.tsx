@@ -1,6 +1,7 @@
 "use client";
 
 import { CV_MAX_SIZE_BYTES } from "@lamarkerja/shared";
+import Link from "next/link";
 import { useRef, useState } from "react";
 
 import { EmptyState, ErrorBanner, SectionCard } from "@/components/profile/ui";
@@ -197,9 +198,19 @@ export function CvUploadCard({
       </div>
 
       <div className="mt-6 space-y-3">
-        <h3 className="text-xs font-semibold tracking-wider text-ink-soft uppercase">
-          Riwayat CV Terunggah ({items.length})
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold tracking-wider text-ink-soft uppercase">
+            Riwayat CV Terunggah ({items.length})
+          </h3>
+          {items.some((item) => item.status === "extracted") ? (
+            <Link
+              href="/profile/cv/review"
+              className="text-xs font-semibold text-accent-deep hover:underline"
+            >
+              Tinjau saran AI →
+            </Link>
+          ) : null}
+        </div>
 
         {items.length === 0 ? (
           <EmptyState>Belum ada berkas CV yang diunggah.</EmptyState>

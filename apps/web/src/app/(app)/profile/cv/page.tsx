@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { ResumeBuilder } from "@/components/resume/resume-builder";
 import { requireUser } from "@/lib/auth";
+import { countPendingSuggestions } from "@/lib/cv/review-data";
 import { loadProfileBundle, loadUserResumes } from "@/lib/profile-data";
 import { createClient } from "@/lib/supabase/server";
 
@@ -12,9 +13,10 @@ export default async function CvPage() {
   const user = await requireUser();
   const supabase = await createClient();
 
-  const [bundle, resumes] = await Promise.all([
+  const [bundle, resumes, pendingSuggestions] = await Promise.all([
     loadProfileBundle(supabase, user.id),
     loadUserResumes(supabase, user.id),
+    countPendingSuggestions(supabase, user.id),
   ]);
 
   const counts = [
@@ -48,6 +50,18 @@ export default async function CvPage() {
         </span>
         <span className="text-xs text-ink-soft">{counts}</span>
       </div>
+
+      {pendingSuggestions > 0 ? (
+        <Link
+          href="/profile/cv/review"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-accent/30 bg-accent-soft/40 px-5 py-3.5 text-sm text-accent-deep transition-colors hover:bg-accent-soft/70"
+        >
+          <span className="font-semibold">
+            {pendingSuggestions} saran hasil AI menunggu tinjauan Anda.
+          </span>
+          <span className="text-xs font-semibold">Tinjau sekarang →</span>
+        </Link>
+      ) : null}
 
       <ResumeBuilder initialResumes={resumes} />
     </div>

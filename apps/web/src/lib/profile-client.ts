@@ -1,5 +1,6 @@
 import type { ConsentKind, ResumeTemplate } from "@lamarkerja/shared";
 
+import type { ReviewDecisionResponse } from "@/lib/cv/review-types";
 import type {
   ApiErrorBody,
   ConsentRevokeResult,
@@ -119,6 +120,13 @@ export function revokeAiConsent(kind: ConsentKind = "cv_ai_processing") {
 
 export function fetchUploadedCvs() {
   return request<UploadedCvItem[]>("/api/cv/upload");
+}
+
+export function decideSuggestions(ids: string[], action: "accept" | "reject") {
+  return request<ReviewDecisionResponse>("/api/cv/review/decisions", {
+    method: "POST",
+    body: JSON.stringify({ ids, action }),
+  });
 }
 
 export function uploadCv(file: File) {
