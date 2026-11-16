@@ -127,12 +127,12 @@ mengunduh CV PDF tanpa bergantung pada AI.
 - [x] Normalisasi teks + deteksi PDF scan (`skipped`)
 
 **Worker `cv.parse`**
-- [ ] Worker polling `cv_parse_runs` via secret key
-- [ ] Klien Ollama (`think:false`, JSON Schema, timeout 180s)
-- [ ] Prompt versioned per bagian (identity/experiences/educations/skills)
-- [ ] Validasi zod + repair 1×
-- [ ] `confidence` + `source_snippet` (grounding check)
-- [ ] Circuit breaker 3 gagal/5 menit → jeda 10 menit
+- [x] Worker polling `cv_parse_runs` via secret key
+- [x] Klien Ollama (`think:false`, JSON Schema, timeout 180s)
+- [x] Prompt versioned per bagian (identity/experiences/educations/skills)
+- [x] Validasi zod + repair 1×
+- [x] `confidence` + `source_snippet` (grounding check)
+- [x] Circuit breaker 3 gagal/5 menit → jeda 10 menit
 
 **Review**
 - [ ] Halaman review diff per field
@@ -291,3 +291,4 @@ mengunduh CV PDF tanpa bergantung pada AI.
 | 2026-11-12 | M2 | Template A (fresh graduate) & B (berpengalaman) dengan `@react-pdf/renderer` (A4 tanpa Chromium), penyimpanan `RESUME_STORAGE_DIR` + guard path traversal, `GET/POST /api/resumes` (versioning per user + snapshot `data_json`), `GET /api/resumes/:id/file` (inline/attachment + kepemilikan RLS), halaman `/profile/cv` (pilih template, preview iframe, unduh, riwayat versi). Unit test profil kosong/parsial/lengkap + ekstraksi teks PDF, serta verifikasi e2e Playwright lintas user. |
 | 2026-11-12 | M3 (Consent) | Schema & teks kanonik `CV_AI_CONSENT_TEXT`, evaluator `evaluateConsentRecord` + `hashUserAgent` (SHA-256), helper server `requireConsent` (`403 CONSENT_REQUIRED`), endpoint `GET/POST /api/consent` & `GET/DELETE /api/consent/[kind]`, komponen `AiConsentCard` (checkbox opt-in terpisah dari ToS, default kosong) pada `/onboarding` & `/profile`, serta kaskade pencabutan (batalkan `cv_parse_runs`, hapus `cv_parse_suggestions`, jadwalkan hapus `uploaded_cvs`, catat `audit_log`). |
 | 2026-11-16 | M3 (Upload) | `POST/GET /api/cv/upload` dengan gate consent, validasi magic bytes (`%PDF-`, OpenXML ZIP) + sha256 + batas 10 MB, penyimpanan `CV_STORAGE_DIR/<user_id>/<uuid>.<ext>` dengan guard traversal, ekstraksi teks `pdfjs-dist/legacy` (PDF) & `mammoth` (DOCX), normalisasi teks (`\u0000`, kontrol, whitespace, baris kosong), deteksi scan (< 50 karakter → `skipped`), pengantrean 4 `cv_parse_runs` (`identity`/`experiences`/`educations`/`skills`) bila `AI_ENABLED=true`, komponen `CvUploadCard` (drag & drop + riwayat + retensi 30 hari) di `/onboarding` & `/profile`, serta `audit_log` `cv.uploaded`. |
+| 2026-11-16 | M3 (Worker `cv.parse`) | Worker TypeScript (`workers/src`) dengan loader `.env`, klien Supabase secret key, loop polling `cv_parse_runs` + klaim optimistis (`status= pending` + `attempts`), klien Ollama (`think:false`, JSON Schema via `format`, timeout 180s, parse JSON berpagar kode), prompt versioned `2026-11-16.v1` per bagian, validasi zod + repair 1×, grounding `source_snippet` (buang saran halusinasi), simpan `cv_parse_suggestions` idempoten, cek ulang consent sebelum proses (`CONSENT_REVOKED`/`CONSENT_OUTDATED`), skip `NO_EXTRACTABLE_TEXT`/`CV_EXPIRED`, retry `WORKER_MAX_ATTEMPTS` lalu `failed`, circuit breaker 3 gagal/5 menit → jeda 10 menit, dan `WORKER_ONCE=true` untuk uji satu iterasi. Verifikasi: 80 unit test hijau + smoke test nyata terhadap Ollama lokal untuk 4 bagian (identity 6, experiences 2, educations 1, skills 5 saran, semua `parsed`). |

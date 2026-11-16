@@ -10,6 +10,8 @@
     "dev": "corepack pnpm --filter @lamarkerja/web dev",
     "build": "corepack pnpm --filter @lamarkerja/web build",
     "start": "corepack pnpm --filter @lamarkerja/web start",
+    "worker:dev": "corepack pnpm --filter @lamarkerja/workers dev",
+    "worker:start": "corepack pnpm --filter @lamarkerja/workers start",
     "lint": "eslint .",
     "typecheck": "corepack pnpm -r typecheck",
     "test": "vitest run",

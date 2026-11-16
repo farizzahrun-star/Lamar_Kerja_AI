@@ -68,12 +68,32 @@ tidak butuh SMTP. Set `REGISTRATION_ENABLED=false` untuk menutup pendaftaran.
 ### Menjalankan worker
 
 ```bash
-pnpm worker:dev
+pnpm worker:dev     # mode watch, polling terus-menerus
+pnpm worker:start   # satu proses tanpa watch
 ```
 
 Worker memakai `SUPABASE_URL` + `SUPABASE_SECRET_KEY` untuk polling tabel
 antrean (Phase 1: `cv_parse_runs`), jadi tidak memerlukan `DATABASE_URL`.
-Perintah `worker:dev` ditambahkan pada milestone M3.
+Worker memuat `.env` di root repo secara otomatis.
+
+Variabel yang relevan:
+
+| Variabel | Default | Fungsi |
+|---|---|---|
+| `AI_ENABLED` | `true` | `false` menandai semua run `pending` sebagai `skipped` (`AI_DISABLED`) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Endpoint Ollama |
+| `OLLAMA_MODEL` | `qwen3:4b` | Model yang dipakai |
+| `OLLAMA_NUM_CTX` | `8192` | Konteks model |
+| `OLLAMA_TIMEOUT_MS` | `180000` | Batas waktu satu panggilan |
+| `WORKER_POLL_INTERVAL_MS` | `5000` | Jeda polling saat antrean kosong |
+| `WORKER_MAX_ATTEMPTS` | `2` | Batas percobaan per run sebelum `failed` |
+| `WORKER_ONCE` | `false` | `true` memproses satu iterasi lalu keluar (untuk uji manual/cron) |
+
+Contoh uji manual satu iterasi:
+
+```bash
+WORKER_ONCE=true pnpm worker:start
+```
 
 ### Menjalankan Local Runner
 
