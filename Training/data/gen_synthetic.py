@@ -90,6 +90,41 @@ MONTHS = {
 }
 
 NOW = {"id": "Sekarang", "en": "Present"}
+
+SUMMARY = {
+    "id": [
+        "{title} dengan pengalaman {n} tahun di bidang operasional dan analisis data.",
+        "Lulusan {major} yang fokus pada riset lapangan, dokumentasi, dan koordinasi tim.",
+        "Profesional muda yang terbiasa menangani {skill1} dan {skill2} di tim lintas fungsi.",
+    ],
+    "en": [
+        "{title} with {n} years of experience in operations and data analysis.",
+        "{major} graduate focused on field research, documentation, and team coordination.",
+        "Early-career professional experienced in {skill1} and {skill2} within cross-functional teams.",
+    ],
+}
+
+CERT_NAMES = [
+    "Google Data Analytics", "Microsoft Excel Advanced", "TOEFL ITP",
+    "Digital Marketing Fundamentals", "BNSP Junior Web Developer",
+    "Project Management Fundamentals", "Python for Data Science",
+    "Agile Scrum Foundation",
+]
+CERT_ISSUERS = ["Coursera", "Google", "Microsoft", "BNSP", "[KAMPUS]", "LinkedIn Learning"]
+CERT_ACHIEVEMENTS = {
+    "id": [
+        "Menyelesaikan 8 modul dengan nilai akhir 92",
+        "Dinyatakan kompeten pada seluruh unit kompetensi",
+        "Lulus dengan predikat sangat baik",
+        "Meraih skor 580",
+    ],
+    "en": [
+        "Completed 6-course specialization with distinction",
+        "Passed all competency units",
+        "Completed 8 modules with a final grade of 92",
+        "Achieved a score of 580",
+    ],
+}
 EMPLOYMENT = {
     "id": {
         "full_time": "Full-time",
@@ -138,10 +173,19 @@ def make_cv(rng, idx):
     if has_link:
         contact.append("https://[PROFIL]")
     lines.append(" | ".join(contact))
+    summary = rng.choice(SUMMARY[main_lang]).format(
+        title=title,
+        major=major,
+        n={"fresh": 0, "mid": 3, "senior": 8}[persona],
+        skill1=rng.choice(SKILLS),
+        skill2=rng.choice(SKILLS),
+    )
+    lines += ["", "RINGKASAN PROFESIONAL" if main_lang == "id" else "PROFESSIONAL SUMMARY", summary]
     identity_truth = {
         "identity": {
             "full_name": "[NAMA]",
             "headline": headline,
+            "summary": summary,
             "email": "[EMAIL]",
             "phone": "[TELEPON]" if has_phone else None,
             "city": "[KOTA]",
@@ -235,6 +279,37 @@ def make_cv(rng, idx):
             skill_truth.append({"name": name, "level": level, "years": years})
     skill_chunk = "KEAHLIAN\n" + "\n".join(skill_lines) if skill_lines else header
 
+    # ---------- certifications ----------
+    cert_truth, cert_lines = [], []
+    if rng.random() > 0.35:
+        for name in rng.sample(CERT_NAMES, rng.randint(1, 3)):
+            cy, cm, _ = _date(rng, "en")
+            issuer = rng.choice(CERT_ISSUERS)
+            has_id = rng.random() > 0.5
+            ach = rng.sample(CERT_ACHIEVEMENTS[main_lang], rng.randint(1, 2))
+            cert_truth.append(
+                {
+                    "name": name,
+                    "issuer": issuer,
+                    "issue_date": f"{cy}-{cm:02d}",
+                    "expiry_date": None,
+                    "credential_id": "[KREDENSIAL]" if has_id else None,
+                    "achievements": ach,
+                }
+            )
+            head = f"{name} | {issuer} | {MONTHS['en'][cm - 1]} {cy}"
+            if has_id:
+                head += " | ID: [KREDENSIAL]"
+            cert_lines.append(head)
+            cert_lines.extend(f" - {a}" for a in ach)
+            cert_lines.append("")
+    cert_chunk = (
+        ("SERTIFIKASI\n" if main_lang == "id" else "CERTIFICATIONS\n")
+        + "\n".join(cert_lines).strip()
+        if cert_lines
+        else header
+    )
+
     if messy:
         # kolom ganda + footer halaman: uji ketahanan ekstraksi teks
         exp_chunk = "Halaman 1/2\n" + exp_chunk.replace(" | ", "\t")
@@ -246,12 +321,14 @@ def make_cv(rng, idx):
             "experiences": exp_chunk,
             "educations": edu_chunk,
             "skills": skill_chunk,
+            "certifications": cert_chunk,
         },
         {
             "identity": identity_truth,
             "experiences": {"experiences": exp_truth},
             "educations": {"educations": edu_truth},
             "skills": {"skills": skill_truth},
+            "certifications": {"certifications": cert_truth},
         },
     )
 
@@ -270,6 +347,12 @@ def _audit(section, chunk, truth, row_id):
                 assert val.lower() in chunk, f"{row_id}: {key} '{val}' tidak ada di teks"
         for point in item.get("points", []):
             assert point.lower() in chunk, f"{row_id}: point tidak ada di teks"
+        if section == "certifications":
+            assert item["name"].lower() in chunk, f"{row_id}: sertifikat tidak ada di teks"
+            if item.get("issuer"):
+                assert item["issuer"].lower() in chunk, f"{row_id}: issuer tidak ada di teks"
+            for ach in item.get("achievements", []):
+                assert ach.lower() in chunk, f"{row_id}: achievement tidak ada di teks"
 
 
 def main():
@@ -277,7 +360,7 @@ def main():
     ap.add_argument("--cvs", type=int, default=400)
     ap.add_argument("--seed", type=int, default=3407)
     ap.add_argument("--out", default=str(Path(__file__).parent))
-    ap.add_argument("--prefix", default="dataset-cv-v1")
+    ap.add_argument("--prefix", default="dataset-cv-v2")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)

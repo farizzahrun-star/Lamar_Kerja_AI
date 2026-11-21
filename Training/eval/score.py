@@ -1,11 +1,11 @@
 """Harness evaluasi cv.parse: field-level P/R/F1, schema validity, hallucination.
 
     # 1. jalankan model pada test set (Ollama lokal, CPU)
-    python Training/eval/score.py predict --ref Training/data/dataset-cv-v1-test.jsonl \
+    python Training/eval/score.py predict --ref Training/data/dataset-cv-v2-test.jsonl \
         --model qwen3:4b --out preds-qwen3.jsonl
 
     # 2. hitung metrik
-    python Training/eval/score.py score --ref Training/data/dataset-cv-v1-test.jsonl \
+    python Training/eval/score.py score --ref Training/data/dataset-cv-v2-test.jsonl \
         --pred preds-qwen3.jsonl --out results/2026-11-20-baseline.json
 
 Ambang Phase 1 ada di docs/ai-training.md (F1 >= 0.82, hallucination <= 2%,
@@ -25,22 +25,27 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from schema import SCHEMAS, SECTIONS  # noqa: E402
+from schema import SCHEMAS, SECTIONS, normalize  # noqa: E402
 
-SYNONYMS = {
-    "js": "javascript", "reactjs": "react", "node": "node.js", "nodejs": "node.js",
-    "ts": "typescript", "postgres": "postgresql", "excel": "ms excel",
-    "gpa": "ipk",
-}
+SYNONYM_GROUPS = [
+    ("javascript", {"js", "javascript"}),
+    ("typescript", {"ts", "typescript"}),
+    ("node.js", {"node", "nodejs", "node.js"}),
+    ("react", {"react", "reactjs"}),
+    ("postgresql", {"postgres", "postgresql"}),
+    ("excel", {"excel"}),
+    ("gpa", {"gpa", "ipk"}),
+]
+CANON = {alias: canon for canon, aliases in SYNONYM_GROUPS for alias in aliases}
 FUZZY_FIELDS = {"company", "institution"}
 NUMERIC_FIELDS = {"gpa", "years", "start_year", "end_year"}
 
 
 def norm(value):
     s = str(value).lower().strip()
-    s = SYNONYMS.get(s, s)
     s = re.sub(r"[^\w\[\]\s./#+-]", " ", s)
-    return re.sub(r"\s+", " ", s).strip(" .-/#+")
+    s = re.sub(r"\s+", " ", s).strip(" .-/#+")
+    return " ".join(CANON.get(tok, tok) for tok in s.split())
 
 
 def token_overlap(a, b):
@@ -73,9 +78,9 @@ def flatten(section, obj):
         if not isinstance(item, dict):
             continue
         for k, v in item.items():
-            if k == "points":
-                for j, point in enumerate(v or []):
-                    out[f"{section}[{i}].points[{j}]"] = point
+            if isinstance(v, list) and all(isinstance(x, str) for x in v):
+                for j, text in enumerate(v):
+                    out[f"{section}[{i}].{k}[{j}]"] = text
             elif k == "is_current":
                 out[f"{section}[{i}].is_current"] = bool(v)
             elif v not in (None, "", []):
@@ -92,11 +97,11 @@ def same(field, pred, truth):
             return False
     if name == "is_current":
         return bool(pred) == bool(truth)
-    if name in ("start_date", "end_date"):
+    if name in ("start_date", "end_date", "issue_date", "expiry_date"):
         a, b = months(pred), months(truth)
         if a is None or b is None:
             return norm(pred) == norm(truth)
-        return abs(a - b) <= (1 if name == "end_date" else 0)
+        return abs(a - b) <= (1 if name in ("end_date", "expiry_date") else 0)
     if name in FUZZY_FIELDS:
         return token_overlap(pred, truth) >= 0.85
     return norm(pred) == norm(truth)
@@ -224,7 +229,7 @@ def predict(ref_path, model, out_path, host):
             )
             body = json.load(urllib.request.urlopen(req, timeout=300))
             raw = body["message"]["content"]
-            parsed = json.loads(raw)
+            parsed = normalize(section, json.loads(raw))
         except Exception as exc:  # noqa: BLE001 - satu contoh gagal tidak boleh menghentikan eval
             raw, parsed = f"{type(exc).__name__}: {exc}", None
         out.append({
@@ -243,6 +248,8 @@ def predict(ref_path, model, out_path, host):
 
 def selftest():
     assert norm("  Software  Engineer. ") == "software engineer"
+    assert norm("Excel") == "excel"
+    assert norm("js") == norm("JavaScript") == "javascript"
     assert token_overlap("[PERUSAHAAN] Teknologi", "[PERUSAHAAN] teknologi") >= 0.85
     assert same("experiences[0].company", "[PERUSAHAAN] Teknologi", "[PERUSAHAAN] teknologi")
     assert same("experiences[0].start_date", "2022-03", "2022-03")
@@ -259,6 +266,16 @@ def selftest():
         "experiences[0].is_current", "experiences[0].points[0]", "experiences[0].points[1]",
     }, f
     assert flatten("skills", {"skills": []}) == {}
+    cert = flatten("certifications", {"certifications": [{
+        "name": "TOEFL ITP", "issuer": None, "issue_date": "2025-02", "expiry_date": None,
+        "credential_id": None, "achievements": ["Skor 580", "Lulus"]}]})
+    assert set(cert) == {
+        "certifications[0].name", "certifications[0].issue_date",
+        "certifications[0].achievements[0]", "certifications[0].achievements[1]",
+    }, cert
+    assert same("certifications[0].expiry_date", "2026-02", "2026-03")
+    assert same("experiences[0].end_date", "2025-02", "2025-03")
+    assert not same("certifications[0].issue_date", "2025-01", "2025-03")
     print("selftest ok")
 
 
