@@ -23,12 +23,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from schema import SCHEMAS, SECTIONS, SYS, user_prompt  # noqa: E402
+from schema import DATE_FIELDS, SCHEMAS, SECTIONS, SYS, normalize, user_prompt  # noqa: E402
 from score import flatten, norm  # noqa: E402
 
 # hanya field bebas-teks yang masuk akal dicek substring; tanggal/gpa/angka dilewati
 TEXT_NAMES = {
-    "full_name", "headline", "company", "title", "institution", "major", "name", "points",
+    "full_name", "headline", "company", "title", "institution", "major", "name",
+    "points", "issuer", "achievements",
 }
 MIN_CHARS = 50
 
@@ -80,6 +81,23 @@ def ask(host, model, section, cv_text):
     return body["message"]["content"]
 
 
+def format_issues(section, parsed):
+    """Pelanggaran yang tersisa setelah normalize: tanggal aneh / is_current bentrok."""
+    out = []
+    body = parsed.get(section)
+    items = body if isinstance(body, list) else ([body] if isinstance(body, dict) else [])
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        for field in DATE_FIELDS:
+            value = item.get(field)
+            if isinstance(value, str) and not re.fullmatch(r"\d{4}-\d{2}", value):
+                out.append(f"{section}[{i}].{field} bukan YYYY-MM: {value!r}")
+        if item.get("is_current") and item.get("end_date"):
+            out.append(f"{section}[{i}] is_current true tapi end_date terisi")
+    return out
+
+
 def ungrounded(section, parsed, cv_text):
     """Field teks yang nilainya tidak ada di CV = kandidat halusinasi."""
     haystack = norm(cv_text)
@@ -107,20 +125,24 @@ def run(path, model, host, out_path):
     for section in SECTIONS:
         started = time.time()
         try:
-            parsed = json.loads(ask(host, model, section, cv_text))
+            parsed = normalize(section, json.loads(ask(host, model, section, cv_text)))
         except Exception as exc:  # noqa: BLE001
             print(f"{section:<12} FAIL: {type(exc).__name__}: {exc}")
             report["sections"][section] = {"error": f"{type(exc).__name__}: {exc}"}
             continue
         bad = ungrounded(section, parsed, cv_text)
+        issues = format_issues(section, parsed)
         seconds = round(time.time() - started, 1)
         fields = len(flatten(section, parsed))
         print(f"{section:<12} {fields:>5} {len(bad):>10} {seconds:>6}")
         report["sections"][section] = {
             "parsed": parsed,
             "ungrounded": bad,
+            "format_issues": issues,
             "latency_s": seconds,
         }
+        for item in issues:
+            print(f"  ~ {item}")
         if bad:
             for item in bad:
                 print(f"  ! {item}")
@@ -128,8 +150,11 @@ def run(path, model, host, out_path):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
     total_bad = sum(len(s.get("ungrounded", [])) for s in report["sections"].values())
+    total_issues = sum(len(s.get("format_issues", [])) for s in report["sections"].values())
     print(f"\nhasil -> {out_path}")
     print(f"{'OK: semua field didukung teks CV' if not total_bad else f'{total_bad} field perlu dicek manual'}")
+    if total_issues:
+        print(f"{total_issues} masalah format (tanggal/is_current) perlu dilihat")
     print("Cek manual: null dipakai saat data tidak ada, tanggal YYYY-MM, is_current sesuai CV.")
 
 
@@ -147,6 +172,13 @@ def selftest():
         "experiences[0].points[1] = 'Memimpin 50 orang'",
     ]
     assert ungrounded("skills", {"skills": []}, cv) == []
+    assert format_issues("experiences", {"experiences": [{
+        "start_date": "Feb 2026", "end_date": "2026-10", "is_current": True}]}) == [
+        "experiences[0].start_date bukan YYYY-MM: 'Feb 2026'",
+        "experiences[0] is_current true tapi end_date terisi",
+    ]
+    assert format_issues("certifications", {"certifications": [{
+        "issue_date": "2025-02", "expiry_date": None}]}) == []
     print("selftest ok")
 
 

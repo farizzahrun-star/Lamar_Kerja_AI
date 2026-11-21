@@ -9,21 +9,24 @@ gratis)**, dievaluasi di **CPU lokal**. Acuan: [docs/ai-training.md](../docs/ai-
 | Komponen | File | Status |
 |---|---|---|
 | Schema + prompt (sumber tunggal) | `schema.py` | ✅ jalan (`python schema.py`) |
-| Generator dataset sintetis | `data/gen_synthetic.py` | ✅ 1600 contoh (400 CV, 80/10/10 per CV) |
+| Generator dataset sintetis | `data/gen_synthetic.py` | ✅ 2000 contoh v2 (400 CV, 80/10/10 per CV) |
 | Trainer QLoRA untuk Colab | `train_colab.py` | ✅ siap, **belum dijalankan** |
 | Harness evaluasi (F1, halusinasi, latency) | `eval/score.py` | ✅ jalan (`--selftest` lulus) |
 | Tes CV pribadi (PDF/DOCX/TXT) | `eval/try_cv.py` | ✅ jalan (`--selftest` lulus) |
-| Dataset v1 | `data/dataset-cv-v1-*.jsonl` | ✅ train 1280 / val 160 / test 160 baris |
-| Baseline terukur (A–E) | `Training/results/` | 🟡 mini 20/160 baris |
+| Dataset v2 (5 bagian) | `data/dataset-cv-v2-*.jsonl` | ✅ train 1600 / val 200 / test 200 baris |
+| Baseline terukur (A–E) | `Training/results/` | 🟡 mini 20 baris **pada schema v1** (tidak sebanding) |
 | Training di Colab | `outputs/adapter` | ⬜ belum |
 | Export GGUF + daftar Ollama | `outputs/gguf` | ⬜ belum |
 
 Progres kasar: **infrastruktur 100%, eksekusi 0%**. Sisanya kerja menjalankan,
 bukan menulis kode baru.
 
-> Catatan doc: fine-tune hanya sah kalau baseline E mentok. Dataset v1 sekarang
+> Catatan doc: fine-tune hanya sah kalau baseline E mentok. Dataset v2 sekarang
 > **sintetis murni** — cukup untuk eksperimen, belum untuk promosi model. Jangan
 > lewati Langkah 1 di bawah; tanpa angka baseline, hasil LoRA tidak bisa dibuktikan.
+>
+> Dataset v1 sudah dihapus (masih ada di commit `8cb3d75`). Schema berubah =
+> dataset baru + eval baru; angka baseline v1 tidak boleh dibandingkan dengan v2.
 
 ## Langkah 0 — Tes CV sendiri (10 menit)
 
@@ -42,6 +45,19 @@ Hasil di `Training/results/try-<nama>.json` (gitignored). Yang dicek manual:
 - [ ] Jalankan pada 1 CV sendiri, catat field yang salah.
 - [ ] Kalau `ungrounded` > 0, perbaiki prompt (`schema.py`), bukan modelnya.
 
+## Schema v2 — summary + sertifikat (perubahan terakhir)
+
+| Perubahan | Detail |
+|---|---|
+| `identity.summary` | ringkasan profesional; tanpa panggilan model tambahan |
+| `certifications` | bagian ke-5: `name`, `issuer`, `issue_date`, `expiry_date`, `credential_id`, `achievements[]` |
+| Normalizer | `schema.normalize()`: `"February 2026"` -> `"2026-02"`, `"2025"` -> `"2025-01"`, `is_current:true` -> `end_date:null` |
+| Aturan prompt baru | tanggal wajib `YYYY-MM`; isi `employment_type`/`level`/`years`/`gpa` hanya bila tertulis |
+| `try_cv.py` | menandai tanggal yang tak bisa dinormalisasi + `is_current` yang bentrok |
+
+Waktu parse naik dari 4 ke 5 panggilan (± +10-20 detik di CPU). Latency gate
+masih aman (~24 detik/bagian).
+
 ## Langkah 1 — Ukur baseline di CPU lokal (0 biaya, ~1-2 jam)
 
 Ollama harus hidup, model sudah ada (`ollama list` → `qwen3:4b`).
@@ -51,11 +67,11 @@ cd /Users/macbookpro/Documents/GitHub/Lamar_Kerja_AI
 
 # B = qwen3:4b zero-shot, sesuai prompt produksi
 python3 Training/eval/score.py predict \
-  --ref Training/data/dataset-cv-v1-test.jsonl \
+  --ref Training/data/dataset-cv-v2-test.jsonl \
   --model qwen3:4b --out Training/results/pred-qwen3-base.jsonl
 
 python3 Training/eval/score.py score \
-  --ref Training/data/dataset-cv-v1-test.jsonl \
+  --ref Training/data/dataset-cv-v2-test.jsonl \
   --pred Training/results/pred-qwen3-base.jsonl \
   --out Training/results/2026-11-20-baseline-B.json
 ```
@@ -66,7 +82,7 @@ masalahnya prompt/schema, bukan model.
 - [ ] Simpan hasil baseline B.
 - [ ] Catat F1, hallucination, latency p95 di tabel progres di bawah.
 
-## Temuan awal (mini, 20/160 baris — bukan baseline resmi)
+## Temuan awal (mini, 20 dari 200 baris, **schema v1** — bukan baseline resmi)
 
 `qwen3:4b` zero-shot + prompt section-wise + `format` schema, 20 baris test set:
 
@@ -93,7 +109,7 @@ Perbaikan prompt yang sudah dilakukan: `schema.py` kini memerintahkan menyalin
 placeholder apa adanya. Tanpa itu model mengubah `[NAMA]` jadi `null` dan
 `[KAMPUS]` jadi `KAMPUS` (kehilangan bracket) — terlihat saat tes, sudah diperbaiki.
 
-Langkah wajib sebelum Colab: jalankan baseline penuh 160 baris **dan** tambahkan
+Langkah wajib sebelum Colab: jalankan baseline penuh 200 baris v2 **dan** tambahkan
 5-10 CV nyata (punyamu, dianonimisasi) ke test set. Kalau F1 di CV nyata turun di
 bawah 0.82, barulah LoRA punya alasan.
 
@@ -125,7 +141,7 @@ manual).
 
 ## Langkah 3 — Training penuh (~30-60 menit di T4)
 
-- [ ] `!python train_colab.py --stage train` (1600 contoh, 3 epoch, r=16, lr=1e-4)
+- [ ] `!python train_colab.py --stage train` (1600 contoh v2, 3 epoch, r=16, lr=1e-4)
 - [ ] Simpan `outputs/adapter` ke Google Drive (Colab gratis sering putus):
       `from google.colab import drive; drive.mount('/content/drive')` lalu
       `!cp -r outputs /content/drive/MyDrive/lamar-training/`
@@ -149,10 +165,10 @@ ollama run lamar-cv:q4 "BAGIAN: skills ..."
 ```bash
 cd /Users/macbookpro/Documents/GitHub/Lamar_Kerja_AI
 python3 Training/eval/score.py predict \
-  --ref Training/data/dataset-cv-v1-test.jsonl \
+  --ref Training/data/dataset-cv-v2-test.jsonl \
   --model lamar-cv:q4 --out Training/results/pred-lamar-cv-q4.jsonl
 python3 Training/eval/score.py score \
-  --ref Training/data/dataset-cv-v1-test.jsonl \
+  --ref Training/data/dataset-cv-v2-test.jsonl \
   --pred Training/results/pred-lamar-cv-q4.jsonl \
   --out Training/results/2026-11-21-challenger-q4.json
 ```
@@ -194,7 +210,7 @@ dipakai produksi:
 
 ## Urutan kerja berikutnya (3 item teratas)
 
-1. Langkah 0 (CV sendiri) + Langkah 1 penuh (160 baris) → angka baseline B resmi.
+1. Langkah 0 (CV sendiri, cek `summary` + `certifications` muncul) + Langkah 1 penuh (200 baris v2) → angka baseline B resmi.
 2. Tambah 5-10 CV nyata ke test set; kalau F1 CV nyata masih ≥ 0.82, **stop** —
    tidak perlu LoRA (sesuai doc). Kalau < 0.82, lanjut.
 3. Baru Langkah 2 (Colab smoke run) → training penuh → export.
