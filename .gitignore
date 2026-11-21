@@ -25,3 +25,8 @@ storage/
 *.log
 .DS_Store
 Thumbs.db
+
+# Training artifacts (Colab)
+Training/outputs/
+Training/llama.cpp/
+Training/results/
