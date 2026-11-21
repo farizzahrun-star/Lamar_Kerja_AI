@@ -1,11 +1,11 @@
 """Harness evaluasi cv.parse: field-level P/R/F1, schema validity, hallucination.
 
     # 1. jalankan model pada test set (Ollama lokal, CPU)
-    python Training/eval/score.py predict --ref Training/data/dataset-cv-v2-test.jsonl \
+    python Training/eval/score.py predict --ref Training/data/dataset-cv-v3-test.jsonl \
         --model qwen3:4b --out preds-qwen3.jsonl
 
     # 2. hitung metrik
-    python Training/eval/score.py score --ref Training/data/dataset-cv-v2-test.jsonl \
+    python Training/eval/score.py score --ref Training/data/dataset-cv-v3-test.jsonl \
         --pred preds-qwen3.jsonl --out results/2026-11-20-baseline.json
 
 Ambang Phase 1 ada di docs/ai-training.md (F1 >= 0.82, hallucination <= 2%,
@@ -25,7 +25,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from schema import SCHEMAS, SECTIONS, normalize  # noqa: E402
+from schema import SCHEMAS, SECTIONS, enforce_grounding, normalize  # noqa: E402
 
 SYNONYM_GROUPS = [
     ("javascript", {"js", "javascript"}),
@@ -229,7 +229,9 @@ def predict(ref_path, model, out_path, host):
             )
             body = json.load(urllib.request.urlopen(req, timeout=300))
             raw = body["message"]["content"]
+            cv_raw = cv_text(row["messages"][1]["content"])
             parsed = normalize(section, json.loads(raw))
+            parsed = enforce_grounding(section, parsed, cv_raw)
         except Exception as exc:  # noqa: BLE001 - satu contoh gagal tidak boleh menghentikan eval
             raw, parsed = f"{type(exc).__name__}: {exc}", None
         out.append({

@@ -23,13 +23,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from schema import DATE_FIELDS, SCHEMAS, SECTIONS, SYS, normalize, user_prompt  # noqa: E402
+from schema import (  # noqa: E402
+    DATE_FIELDS, SCHEMAS, SECTIONS, SYS, enforce_grounding, normalize, user_prompt,
+)
 from score import flatten, norm  # noqa: E402
 
 # hanya field bebas-teks yang masuk akal dicek substring; tanggal/gpa/angka dilewati
 TEXT_NAMES = {
     "full_name", "headline", "company", "title", "institution", "major", "name",
-    "points", "issuer", "achievements",
+    "points", "issuer", "achievements", "role", "organization", "outcome",
 }
 MIN_CHARS = 50
 
@@ -126,6 +128,7 @@ def run(path, model, host, out_path):
         started = time.time()
         try:
             parsed = normalize(section, json.loads(ask(host, model, section, cv_text)))
+            parsed = enforce_grounding(section, parsed, cv_text)
         except Exception as exc:  # noqa: BLE001
             print(f"{section:<12} FAIL: {type(exc).__name__}: {exc}")
             report["sections"][section] = {"error": f"{type(exc).__name__}: {exc}"}
@@ -179,6 +182,9 @@ def selftest():
     ]
     assert format_issues("certifications", {"certifications": [{
         "issue_date": "2025-02", "expiry_date": None}]}) == []
+    guarded = enforce_grounding("experiences", {"experiences": [{
+        "company": "[PERUSAHAAN]", "employment_type": "full_time"}]}, cv)
+    assert guarded["experiences"][0]["employment_type"] is None
     print("selftest ok")
 
 
