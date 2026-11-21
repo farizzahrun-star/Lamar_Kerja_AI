@@ -13,10 +13,15 @@ SYS = (
     "Salin nilai apa adanya, termasuk placeholder seperti [NAMA]. "
     "Tanggal selalu YYYY-MM; jika hanya tahun pakai YYYY-01. "
     "Jika is_current true, end_date harus null. "
-    "Isi employment_type, level, years, gpa hanya bila tertulis di CV."
+    "Isi employment_type, level, years, gpa hanya bila tertulis di CV. "
+    "Ambil SEMUA skill dari semua blok keahlian, termasuk tools dan bahasa pemrograman. "
+    "Bahasa asing masuk ke bagian languages, bukan skills."
 )
 
-SECTIONS = ("identity", "experiences", "educations", "skills", "certifications")
+SECTIONS = (
+    "identity", "experiences", "educations", "skills",
+    "certifications", "projects", "languages",
+)
 
 
 def _obj(props, required=None):
@@ -132,6 +137,43 @@ SCHEMAS = {
             }
         }
     ),
+    "projects": _obj(
+        {
+            "projects": {
+                "type": "array",
+                "items": _obj(
+                    {
+                        "name": {"type": "string"},
+                        "role": _NULLABLE_STR,
+                        "organization": _NULLABLE_STR,
+                        "start_date": _NULLABLE_STR,
+                        "end_date": _NULLABLE_STR,
+                        "outcome": _NULLABLE_STR,
+                        "points": {"type": "array", "items": {"type": "string"}},
+                    }
+                ),
+            }
+        }
+    ),
+    "languages": _obj(
+        {
+            "languages": {
+                "type": "array",
+                "items": _obj(
+                    {
+                        "name": {"type": "string"},
+                        "proficiency": {
+                            "type": ["string", "null"],
+                            "enum": [
+                                "native", "fluent", "professional_working",
+                                "intermediate", "basic", None,
+                            ],
+                        },
+                    }
+                ),
+            }
+        }
+    ),
 }
 
 
@@ -205,12 +247,71 @@ def normalize(section, obj):
             for field in DATE_FIELDS:
                 if field in item:
                     item[field] = to_yyyymm(item[field])
+            if isinstance(item.get("issuer"), str):
+                item["issuer"] = re.sub(
+                    r"^(by|issued by)\s+", "", item["issuer"], flags=re.I
+                ).strip()
             if item.get("is_current"):
                 item["end_date"] = None
     elif isinstance(body, dict):
         for field in DATE_FIELDS:
             if field in body:
                 body[field] = to_yyyymm(body[field])
+    return obj
+
+
+EMPLOYMENT_WORDS = {
+    "full-time", "full time", "part-time", "part time", "contract", "kontrak",
+    "internship", "intern", "magang", "freelance", "freelancer",
+}
+LEVEL_WORDS = ("beginner", "intermediate", "advanced", "expert", "pemula", "mahir", "lanjutan")
+DURATION_WORDS = ("tahun", "years", "year", "yrs", "thn")
+
+
+def _near(lines, needle):
+    """Hanya baris yang menyebut nilai. Kalau tak ketemu -> kosong (= tak ada bukti)."""
+    n = re.sub(r"\s+", " ", str(needle or "")).strip().lower()
+    for line in lines:
+        if n and n in line:
+            return line
+    return ""
+
+
+def _around(cv_text, needle, span=150):
+    """Potong teks di sekitar nama perusahaan: tipe kerja sering di baris berikutnya."""
+    n = re.sub(r"\s+", " ", str(needle or "")).strip().lower()
+    hay = re.sub(r"\s+", " ", cv_text).lower()
+    i = hay.find(n)
+    return hay[i : i + len(n) + span] if i >= 0 else ""
+
+
+def enforce_grounding(section, obj, cv_text):
+    """Confidence gate sederhana: metadata yang tidak tertulis di CV jadi null.
+
+    Ini menangani kebiasaan model mengarang employment_type/level/years walau
+    prompt sudah melarang. Fakta dihapus, bukan ditambah — aman untuk halusinasi.
+    """
+    obj = copy.deepcopy(obj)
+    body = obj.get(section) if isinstance(obj, dict) else None
+    if not isinstance(body, list):
+        return obj
+    lines = [re.sub(r"\s+", " ", ln).strip().lower() for ln in cv_text.splitlines() if ln.strip()]
+
+    for item in body:
+        if not isinstance(item, dict):
+            continue
+        if section == "experiences" and item.get("employment_type"):
+            snippet = _around(cv_text, item.get("company"))
+            if not any(word in snippet for word in EMPLOYMENT_WORDS):
+                item["employment_type"] = None
+        elif section == "skills":
+            snippet = _near(lines, item.get("name"))
+            if item.get("level") and not any(word in snippet for word in LEVEL_WORDS):
+                item["level"] = None
+            if item.get("years") is not None and not any(
+                word in snippet for word in DURATION_WORDS
+            ):
+                item["years"] = None
     return obj
 
 
@@ -233,4 +334,25 @@ if __name__ == "__main__":
         "start_date": "January 2024", "end_date": "March 2025", "is_current": True}]})
     assert fixed["experiences"][0]["start_date"] == "2024-01"
     assert fixed["experiences"][0]["end_date"] is None
+    cert = normalize("certifications", {"certifications": [{"issuer": "by Digital Skola"}]})
+    assert cert["certifications"][0]["issuer"] == "Digital Skola"
+    cv = (
+        "Brand Manager | Beyondjersey.id | February 2026\n"
+        " - Manage daily business operations, order processing, and shipping coordination for the team\n"
+        " - Conduct market research to understand customer needs across several market segments\n"
+        "Field Assistant | PTPN | June 2025 | Internship\n"
+        "Python (Advanced), 3 years of R\n"
+        "Excel\n"
+        "Git\n"
+    )
+    exp = enforce_grounding("experiences", {"experiences": [
+        {"company": "Beyondjersey.id", "employment_type": "full_time"},
+        {"company": "PTPN", "employment_type": "internship"}]}, cv)
+    assert exp["experiences"][0]["employment_type"] is None
+    assert exp["experiences"][1]["employment_type"] == "internship"
+    sk = enforce_grounding("skills", {"skills": [
+        {"name": "Python", "level": "advanced", "years": 3},
+        {"name": "Excel", "level": "advanced", "years": 1}]}, cv)
+    assert sk["skills"][0] == {"name": "Python", "level": "advanced", "years": 3}
+    assert sk["skills"][1] == {"name": "Excel", "level": None, "years": None}
     print("schema ok:", ", ".join(SECTIONS))

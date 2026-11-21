@@ -125,6 +125,45 @@ CERT_ACHIEVEMENTS = {
         "Achieved a score of 580",
     ],
 }
+
+PROJECT_NAMES = {
+    "id": [
+        "Analisis Indeks Kekeringan dan Produktivitas Tanaman",
+        "Evaluasi Kualitas Benih pada Tiga Lahan Percobaan",
+        "Studi Pengelolaan Limbah Perkebunan",
+    ],
+    "en": [
+        "Analysis of the Drought Index and Crop Productivity",
+        "Evaluation of Seed Quality across Three Experimental Plots",
+        "Assessment of Plantation Waste Management",
+    ],
+}
+PROJECT_ROLES = ["Undergraduate Research", "Research Assistant", "Capstone Project"]
+PROJECT_BULLETS = {
+    "id": [
+        "Memproses 40 tahun data curah hujan historis menggunakan Google Earth Engine dan RStudio",
+        "Melakukan analisis statistik hubungan antara variabel iklim dan produktivitas tanaman",
+        "Melakukan survei lapangan dan wawancara terstruktur dengan 20 responden",
+        "Menyusun laporan akhir dan mempresentasikan temuan kepada pembimbing",
+    ],
+    "en": [
+        "Processed 40 years of historical rainfall data using Google Earth Engine and RStudio",
+        "Applied statistical analysis to assess relationships between climate variables and productivity",
+        "Conducted field surveys and structured interviews with 20 respondents",
+        "Prepared the final report and presented findings to the supervisor",
+    ],
+}
+PROJECT_OUTCOMES = {
+    "id": ["Publikasi di [JURNAL] (2024)", "Laporan akhir diserahkan ke [KAMPUS]"],
+    "en": ["Published in [JOURNAL] (2024)", "Final report submitted to [KAMPUS]"],
+}
+LANG_PROFICIENCY = {
+    "native": "Native",
+    "fluent": "Fluent",
+    "professional_working": "Professional Working Proficiency",
+    "intermediate": "Intermediate",
+    "basic": "Basic",
+}
 EMPLOYMENT = {
     "id": {
         "full_time": "Full-time",
@@ -310,6 +349,44 @@ def make_cv(rng, idx):
         else header
     )
 
+    # ---------- projects / research ----------
+    proj_truth, proj_lines = [], []
+    if rng.random() > 0.4:
+        for name in rng.sample(PROJECT_NAMES[main_lang], rng.randint(1, 2)):
+            sy, sm, _ = _date(rng, "en")
+            ey, em = min(sy + rng.randint(1, 2), 2025), rng.randint(1, 12)
+            role = rng.choice(PROJECT_ROLES)
+            bullets = rng.sample(PROJECT_BULLETS[main_lang], rng.randint(2, 4))
+            outcome = rng.choice(PROJECT_OUTCOMES[main_lang])
+            proj_truth.append({
+                "name": name, "role": role, "organization": "[KAMPUS]",
+                "start_date": f"{sy}-{sm:02d}", "end_date": f"{ey}-{em:02d}",
+                "outcome": outcome, "points": bullets,
+            })
+            proj_lines.append(
+                f"{name} | {role} | [KAMPUS] | "
+                f"{MONTHS['en'][sm - 1]} {sy} - {MONTHS['en'][em - 1]} {ey}"
+            )
+            proj_lines.extend(f" - {b}" for b in bullets)
+            proj_lines.append(f" - {outcome}")
+            proj_lines.append("")
+    proj_chunk = (
+        ("PROYEK & RISET\n" if main_lang == "id" else "PROJECTS & RESEARCH\n")
+        + "\n".join(proj_lines).strip()
+        if proj_lines
+        else header
+    )
+
+    # ---------- languages ----------
+    lang_truth, lang_lines = [], []
+    for name, prof in [("Bahasa Indonesia", "native"), ("English", "professional_working")]:
+        lang_truth.append({"name": name, "proficiency": prof})
+        lang_lines.append(f"{name} ({LANG_PROFICIENCY[prof]})")
+    if rng.random() > 0.7:
+        lang_truth.append({"name": "Japanese", "proficiency": "basic"})
+        lang_lines.append("Japanese (Basic)")
+    lang_chunk = ("BAHASA\n" if main_lang == "id" else "LANGUAGES\n") + ", ".join(lang_lines)
+
     if messy:
         # kolom ganda + footer halaman: uji ketahanan ekstraksi teks
         exp_chunk = "Halaman 1/2\n" + exp_chunk.replace(" | ", "\t")
@@ -322,6 +399,8 @@ def make_cv(rng, idx):
             "educations": edu_chunk,
             "skills": skill_chunk,
             "certifications": cert_chunk,
+            "projects": proj_chunk,
+            "languages": lang_chunk,
         },
         {
             "identity": identity_truth,
@@ -329,6 +408,8 @@ def make_cv(rng, idx):
             "educations": {"educations": edu_truth},
             "skills": {"skills": skill_truth},
             "certifications": {"certifications": cert_truth},
+            "projects": {"projects": proj_truth},
+            "languages": {"languages": lang_truth},
         },
     )
 
@@ -353,6 +434,15 @@ def _audit(section, chunk, truth, row_id):
                 assert item["issuer"].lower() in chunk, f"{row_id}: issuer tidak ada di teks"
             for ach in item.get("achievements", []):
                 assert ach.lower() in chunk, f"{row_id}: achievement tidak ada di teks"
+        if section == "projects":
+            for key in ("name", "role", "organization", "outcome"):
+                val = item.get(key)
+                if val:
+                    assert val.lower() in chunk, f"{row_id}: {key} proyek tidak ada di teks"
+            for point in item.get("points", []):
+                assert point.lower() in chunk, f"{row_id}: point proyek tidak ada di teks"
+        if section == "languages":
+            assert item["name"].lower() in chunk, f"{row_id}: bahasa tidak ada di teks"
 
 
 def main():
@@ -360,7 +450,7 @@ def main():
     ap.add_argument("--cvs", type=int, default=400)
     ap.add_argument("--seed", type=int, default=3407)
     ap.add_argument("--out", default=str(Path(__file__).parent))
-    ap.add_argument("--prefix", default="dataset-cv-v2")
+    ap.add_argument("--prefix", default="dataset-cv-v3")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
