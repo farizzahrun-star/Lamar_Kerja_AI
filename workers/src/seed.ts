@@ -1,7 +1,18 @@
+import {
+  ACTIVE_SCRAPE_PLATFORMS,
+  CV_AI_CONSENT_VERSION,
+  DEFAULT_APPLY_DAILY_LIMIT,
+  DEFAULT_INTERESTS,
+  canonicalizeJobUrl,
+  computeJobRawHash,
+  cvDeleteAfter,
+  extractHrEmails,
+  getYesterdayJakartaDateString,
+  shiftDateString,
+} from "@lamarkerja/shared";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { CV_AI_CONSENT_VERSION, cvDeleteAfter } from "@lamarkerja/shared";
 
 import { readConfig } from "./config";
 import { loadEnvFile } from "./env-file";
@@ -10,25 +21,309 @@ import {
   SYNTHETIC_CV_TEXT,
   SYNTHETIC_EDUCATIONS,
   SYNTHETIC_EXPERIENCES,
+  SYNTHETIC_JOBS,
   SYNTHETIC_LANGUAGES,
   SYNTHETIC_PENDING_SUGGESTIONS,
   SYNTHETIC_PROFILE,
   SYNTHETIC_SKILLS,
   SYNTHETIC_USER,
+  SYNTHETIC_USER_INTEREST_SLUGS,
 } from "./fixtures";
 import { CV_PARSE_PROMPT_VERSION } from "./prompts";
 import { createWorkerSupabase, type WorkerSupabase } from "./supabase";
 
+async function seedPhase2Data(supabase: WorkerSupabase, userId: string): Promise<number> {
+  // 1. Master interests
+  const { error: interestsUpsertError } = await supabase.from("interests").upsert(
+    DEFAULT_INTERESTS.map((item) => ({
+      slug: item.slug,
+      label: item.label,
+      is_default: true,
+    })),
+    { onConflict: "slug" },
+  );
+  if (interestsUpsertError) throw interestsUpsertError;
+
+  const { data: allInterests, error: interestsReadError } = await supabase
+    .from("interests")
+    .select("id, slug");
+  if (interestsReadError) throw interestsReadError;
+
+  const selectedInterestIds = (allInterests ?? [])
+    .filter((item) => (SYNTHETIC_USER_INTEREST_SLUGS as readonly string[]).includes(item.slug))
+    .map((item) => item.id);
+
+  await supabase.from("user_interests").delete().eq("user_id", userId);
+  if (selectedInterestIds.length > 0) {
+    const { error: userInterestsError } = await supabase.from("user_interests").insert(
+      selectedInterestIds.map((interestId) => ({
+        user_id: userId,
+        interest_id: interestId,
+      })),
+    );
+    if (userInterestsError) throw userInterestsError;
+  }
+
+  // 2. Preferensi platform & settings
+  const { error: platformsError } = await supabase.from("user_platforms").upsert(
+    ACTIVE_SCRAPE_PLATFORMS.map((platform) => ({
+      user_id: userId,
+      platform,
+      enabled: true,
+      session_status: "none" as const,
+    })),
+    { onConflict: "user_id,platform" },
+  );
+  if (platformsError) throw platformsError;
+
+  const { error: settingsError } = await supabase.from("user_settings").upsert(
+    {
+      user_id: userId,
+      review_before_send: true,
+      portal_auto_submit: false,
+      apply_daily_limit: DEFAULT_APPLY_DAILY_LIMIT,
+    },
+    { onConflict: "user_id" },
+  );
+  if (settingsError) throw settingsError;
+
+  // 3. Job sources default
+  const defaultSources = [
+    {
+      platform: "glints" as const,
+      type: "guest_scrape" as const,
+      name: "Glints Public Search",
+      config_json: { dailyLimit: 10 },
+      enabled: true,
+    },
+    {
+      platform: "jobstreet" as const,
+      type: "guest_scrape" as const,
+      name: "Jobstreet Public Search",
+      config_json: { dailyLimit: 10 },
+      enabled: true,
+    },
+    {
+      platform: "linkedin" as const,
+      type: "guest_scrape" as const,
+      name: "LinkedIn Public Search",
+      config_json: { dailyLimit: 10 },
+      enabled: true,
+    },
+    {
+      platform: "manual" as const,
+      type: "manual" as const,
+      name: "Manual & CSV Import",
+      config_json: {},
+      enabled: true,
+    },
+  ];
+
+  const { error: sourcesUpsertError } = await supabase
+    .from("job_sources")
+    .upsert(defaultSources, { onConflict: "platform,type,name" });
+  if (sourcesUpsertError) throw sourcesUpsertError;
+
+  const { data: sourceRows, error: sourcesReadError } = await supabase
+    .from("job_sources")
+    .select("id, platform");
+  if (sourcesReadError) throw sourcesReadError;
+
+  const sourceIdByPlatform = new Map((sourceRows ?? []).map((row) => [row.platform, row.id]));
+
+  // 4. Lowongan sintetis + snapshot H-1 (dan H-2 untuk sebagian)
+  const h1Date = getYesterdayJakartaDateString();
+  const h2Date = shiftDateString(h1Date, -1);
+  const h3Date = shiftDateString(h1Date, -2);
+  const nowIso = new Date().toISOString();
+
+  for (let index = 0; index < SYNTHETIC_JOBS.length; index++) {
+    const fixture = SYNTHETIC_JOBS[index]!;
+    const canonicalUrl = canonicalizeJobUrl(fixture.url);
+    const rawHash = computeJobRawHash({
+      title: fixture.title,
+      company: fixture.company,
+      location: fixture.location,
+    });
+    const sourceId = sourceIdByPlatform.get(fixture.platform) ?? null;
+    const postedAt = new Date(Date.now() - (index + 1) * 6 * 3600 * 1000).toISOString();
+
+    const { data: existingJob, error: findError } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("raw_hash", rawHash)
+      .maybeSingle();
+    if (findError) throw findError;
+
+    let jobId = existingJob?.id;
+    if (!jobId) {
+      const { data: insertedJob, error: insertJobError } = await supabase
+        .from("jobs")
+        .insert({
+          source_id: sourceId,
+          external_id: fixture.external_id,
+          title: fixture.title,
+          company: fixture.company,
+          location: fixture.location,
+          work_mode: fixture.work_mode,
+          salary_min: fixture.salary_min,
+          salary_max: fixture.salary_max,
+          description: fixture.description,
+          url: canonicalUrl,
+          posted_at: postedAt,
+          first_seen_at: nowIso,
+          last_seen_at: nowIso,
+          raw_hash: rawHash,
+          created_by: userId,
+        })
+        .select("id")
+        .single();
+      if (insertJobError) throw insertJobError;
+      jobId = insertedJob.id;
+    }
+
+    if (canonicalUrl) {
+      const { error: urlError } = await supabase.from("job_urls").upsert(
+        {
+          job_id: jobId,
+          platform: fixture.platform,
+          url: canonicalUrl,
+          apply_channel: fixture.apply_channel,
+          is_primary: true,
+        },
+        { onConflict: "job_id,platform,url" },
+      );
+      if (urlError) throw urlError;
+    }
+
+    const emails = extractHrEmails(fixture.description);
+    for (const hrEmail of emails) {
+      const { data: existingContact, error: contactReadError } = await supabase
+        .from("job_contacts")
+        .select("id")
+        .eq("job_id", jobId)
+        .ilike("hr_email", hrEmail)
+        .maybeSingle();
+      if (contactReadError) throw contactReadError;
+      if (!existingContact) {
+        const { error: contactInsertError } = await supabase.from("job_contacts").insert({
+          job_id: jobId,
+          hr_email: hrEmail,
+          source: "description",
+        });
+        if (contactInsertError && contactInsertError.code !== "23505") {
+          throw contactInsertError;
+        }
+      }
+    }
+
+    const snapshotRows = [{ job_id: jobId, snapshot_date: h1Date }];
+    if (fixture.includeH2) {
+      snapshotRows.push({ job_id: jobId, snapshot_date: h2Date });
+    }
+    const { error: snapError } = await supabase
+      .from("job_snapshots")
+      .upsert(snapshotRows, { onConflict: "job_id,snapshot_date", ignoreDuplicates: true });
+    if (snapError) throw snapError;
+  }
+
+  // 5. Collector runs sintetis 3 hari terakhir (idempoten untuk run sintetis runner_id=null)
+  await supabase
+    .from("collector_runs")
+    .delete()
+    .is("runner_id", null)
+    .in("run_date", [h1Date, h2Date, h3Date]);
+
+  const makeRunTimes = (dateStr: string, hourUtc: number) => ({
+    started_at: `${dateStr}T${String(hourUtc).padStart(2, "0")}:00:00.000Z`,
+    finished_at: `${dateStr}T${String(hourUtc).padStart(2, "0")}:04:30.000Z`,
+  });
+
+  const collectorFixtures = [
+    {
+      platform: "glints" as const,
+      run_date: h1Date,
+      ...makeRunTimes(h1Date, 12),
+      found: 8,
+      new_count: 2,
+      skipped_known: 6,
+      blocked: false,
+      error_count: 0,
+      last_error: null,
+    },
+    {
+      platform: "jobstreet" as const,
+      run_date: h1Date,
+      ...makeRunTimes(h1Date, 12),
+      found: 7,
+      new_count: 3,
+      skipped_known: 4,
+      blocked: false,
+      error_count: 0,
+      last_error: null,
+    },
+    {
+      platform: "linkedin" as const,
+      run_date: h1Date,
+      ...makeRunTimes(h1Date, 12),
+      found: 4,
+      new_count: 2,
+      skipped_known: 2,
+      blocked: false,
+      error_count: 0,
+      last_error: null,
+    },
+    {
+      platform: "glints" as const,
+      run_date: h2Date,
+      ...makeRunTimes(h2Date, 12),
+      found: 6,
+      new_count: 1,
+      skipped_known: 5,
+      blocked: false,
+      error_count: 0,
+      last_error: null,
+    },
+    {
+      platform: "linkedin" as const,
+      run_date: h2Date,
+      ...makeRunTimes(h2Date, 12),
+      found: 1,
+      new_count: 0,
+      skipped_known: 0,
+      blocked: true,
+      error_count: 1,
+      last_error: "Authwall terdeteksi pada halaman pencarian publik (seed sintetis).",
+    },
+    {
+      platform: "jobstreet" as const,
+      run_date: h3Date,
+      ...makeRunTimes(h3Date, 12),
+      found: 5,
+      new_count: 2,
+      skipped_known: 3,
+      blocked: false,
+      error_count: 0,
+      last_error: null,
+    },
+  ];
+
+  const { error: runsError } = await supabase.from("collector_runs").insert(collectorFixtures);
+  if (runsError) throw runsError;
+
+  return SYNTHETIC_JOBS.length;
+}
+
 /**
  * Mengisi database dengan satu kandidat sintetis (`SYNTHETIC_USER`) beserta
- * profil lengkap, persetujuan AI aktif, satu CV contoh, dan satu saran
- * pending supaya halaman review bisa langsung dicoba.
+ * profil lengkap, persetujuan AI aktif, satu CV contoh, saran pending, dan
+ * data Phase 2 (minat, lowongan H-1, collector_runs).
  *
- * Idempoten: menjalankan ulang akan memperbarui user yang sama.
+ * Idempoten: menjalankan ulang akan memperbarui data yang sama.
  */
 export async function seedSyntheticCandidate(
   supabase: WorkerSupabase,
-): Promise<{ userId: string; email: string }> {
+): Promise<{ userId: string; email: string; jobsSeeded: number }> {
   const { data: listed, error: listError } = await supabase.auth.admin.listUsers({
     page: 1,
     perPage: 200,
@@ -173,7 +468,9 @@ export async function seedSyntheticCandidate(
   );
   if (suggestionError) throw suggestionError;
 
-  return { userId, email: SYNTHETIC_USER.email };
+  const jobsSeeded = await seedPhase2Data(supabase, userId);
+
+  return { userId, email: SYNTHETIC_USER.email, jobsSeeded };
 }
 
 async function runCli() {
@@ -191,6 +488,7 @@ async function runCli() {
       ts: new Date().toISOString(),
       event: "db.seed.completed",
       userId: seeded.userId,
+      jobsSeeded: seeded.jobsSeeded,
       note: "Gunakan email & password SYNTHETIC_USER di workers/src/fixtures.ts untuk login lokal.",
     })}\n`,
   );

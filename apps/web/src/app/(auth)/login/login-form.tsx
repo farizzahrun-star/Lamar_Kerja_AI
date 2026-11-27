@@ -1,14 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+
+import { PasswordInput } from "@/components/auth/password-input";
 
 import { loginAction, type AuthState } from "../actions";
 
 const initialState: AuthState = { error: null };
 
-export function LoginForm({ nextPath }: { nextPath: string }) {
+export function LoginForm({
+  nextPath,
+  initialEmail = "",
+}: {
+  nextPath: string;
+  initialEmail?: string;
+}) {
   const [state, formAction, isPending] = useActionState(loginAction, initialState);
+  const [email, setEmail] = useState(initialEmail);
+  const [password, setPassword] = useState("");
+
+  const emailError = state.fieldErrors?.email;
+  const passwordError = state.fieldErrors?.password;
+  const isInvalidCredentials = state.errorCode === "invalid_credentials";
 
   return (
     <div>
@@ -20,15 +34,26 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
       </header>
 
       {state.error ? (
-        <p
+        <div
           role="alert"
-          className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700"
+          className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
         >
-          {state.error}
-        </p>
+          <p className="font-semibold">{state.error}</p>
+          {isInvalidCredentials && email ? (
+            <p className="mt-1.5 text-xs text-red-700">
+              Belum pernah mendaftar dengan email ini?{" "}
+              <Link
+                href={`/register?email=${encodeURIComponent(email)}`}
+                className="font-semibold underline underline-offset-4"
+              >
+                Daftar akun baru →
+              </Link>
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
-      <form action={formAction} className="space-y-5">
+      <form action={formAction} noValidate className="space-y-5">
         <input type="hidden" name="next" value={nextPath} />
 
         <div>
@@ -41,24 +66,44 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
             type="email"
             autoComplete="email"
             required
-            className="field"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            aria-invalid={emailError || isInvalidCredentials ? true : undefined}
+            aria-describedby={emailError ? "login-email-error" : undefined}
+            className={[
+              "field",
+              emailError || isInvalidCredentials
+                ? "border-red-400 focus:border-red-500 focus:ring-red-100"
+                : "",
+            ].join(" ")}
             placeholder="nama@email.com"
           />
+          {emailError ? (
+            <p id="login-email-error" className="mt-1.5 text-xs font-medium text-red-700">
+              {emailError}
+            </p>
+          ) : null}
         </div>
 
         <div>
           <label className="label" htmlFor="password">
             Password
           </label>
-          <input
+          <PasswordInput
             id="password"
             name="password"
-            type="password"
             autoComplete="current-password"
-            required
-            className="field"
             placeholder="••••••••"
+            hasError={Boolean(passwordError)}
+            describedBy={passwordError ? "login-password-error" : undefined}
+            value={password}
+            onChange={setPassword}
           />
+          {passwordError ? (
+            <p id="login-password-error" className="mt-1.5 text-xs font-medium text-red-700">
+              {passwordError}
+            </p>
+          ) : null}
         </div>
 
         <button type="submit" className="btn-primary" disabled={isPending}>
@@ -68,7 +113,10 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
 
       <p className="mt-6 text-sm text-ink-soft">
         Belum punya akun?{" "}
-        <Link href="/register" className="font-semibold text-accent hover:text-accent-deep">
+        <Link
+          href={email ? `/register?email=${encodeURIComponent(email)}` : "/register"}
+          className="font-semibold text-accent hover:text-accent-deep"
+        >
           Daftar
         </Link>
       </p>

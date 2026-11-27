@@ -45,7 +45,11 @@ export default async function ProfilePage() {
             <Link href="/onboarding" className="btn-secondary">
               Lanjutkan wizard
             </Link>
-          ) : null}
+          ) : (
+            <Link href="/settings" className="btn-secondary">
+              Atur Minat & Platform →
+            </Link>
+          )}
         </div>
       </header>
 

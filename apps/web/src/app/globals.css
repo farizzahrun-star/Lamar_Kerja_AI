@@ -18,6 +18,7 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   body {
@@ -46,6 +47,14 @@
 
   .field:focus {
     @apply border-accent/70 ring-2 ring-accent/15;
+  }
+
+  .field[aria-invalid="true"] {
+    @apply border-red-400 bg-red-50/30;
+  }
+
+  .field[aria-invalid="true"]:focus {
+    @apply border-red-500 ring-2 ring-red-100;
   }
 
   .label {

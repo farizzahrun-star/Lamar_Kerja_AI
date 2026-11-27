@@ -1,17 +1,9 @@
-import Link from "next/link";
-
 import { Brand } from "@/components/brand";
+import { SidebarNav } from "@/components/nav/sidebar-nav";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
 import { logoutAction } from "./actions";
-
-const NAV = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/onboarding", label: "Onboarding" },
-  { href: "/profile", label: "Profil" },
-  { href: "/profile/cv", label: "CV" },
-];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
@@ -27,25 +19,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const initial = displayName.trim().charAt(0).toUpperCase();
 
   return (
-    <div className="min-h-dvh lg:grid lg:grid-cols-[240px_1fr]">
+    <div className="min-h-dvh lg:grid lg:grid-cols-[248px_1fr]">
       <aside className="flex flex-col border-b border-line bg-white px-5 py-5 lg:min-h-dvh lg:border-r lg:border-b-0">
-        <div className="mb-8">
+        <div className="mb-7">
           <Brand />
         </div>
 
-        <nav className="flex flex-wrap gap-1.5 lg:flex-col">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-paper-deep hover:text-ink"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <SidebarNav />
 
-        <div className="mt-6 lg:mt-auto">
+        <div className="mt-6 lg:mt-auto lg:pt-6">
           <div className="mb-3 flex items-center gap-3 rounded-xl border border-line bg-paper px-3 py-2.5">
             <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent-soft text-xs font-bold text-accent-deep">
               {initial}
@@ -67,7 +49,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      <main className="px-5 py-8 sm:px-8 lg:px-12 lg:py-12">{children}</main>
+      <main className="px-5 py-8 sm:px-8 lg:px-12 lg:py-10">{children}</main>
     </div>
   );
 }

@@ -21,6 +21,16 @@ const envSchema = z.object({
     .transform((value) => value !== "false"),
   OLLAMA_MODEL: z.string().min(1).default("qwen3:4b"),
   CV_UPLOAD_MAX_PER_HOUR: z.coerce.number().int().min(1).max(100).default(5),
+  APPLY_DAILY_LIMIT_PER_USER: z.coerce.number().int().min(1).max(25).default(10),
+  ADMIN_EMAILS: z
+    .string()
+    .optional()
+    .transform((value) =>
+      (value ?? "")
+        .split(",")
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean),
+    ),
 });
 
 const parsed = envSchema.safeParse(process.env);

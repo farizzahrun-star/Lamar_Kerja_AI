@@ -22,6 +22,7 @@ coverage/
 uploads/
 storage/
 data/
+browser-profiles/
 .pnpm-store/
 
 # Logs and OS files

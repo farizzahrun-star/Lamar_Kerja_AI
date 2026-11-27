@@ -5,6 +5,8 @@
  * memakai data kandidat atau perusahaan nyata.
  */
 
+import type { ApplyChannel, JobPlatform, WorkMode } from "@lamarkerja/shared";
+
 export const SYNTHETIC_USER = {
   email: "demo.kandidat@lamarkerja.local",
   password: "DemoPassword123!",
@@ -117,3 +119,155 @@ export const SYNTHETIC_PENDING_SUGGESTIONS = [
     source_snippet: "TypeScript, PostgreSQL, Go, Docker, Redis",
   },
 ] as const;
+
+export const SYNTHETIC_USER_INTEREST_SLUGS = [
+  "backend-developer",
+  "fullstack-developer",
+  "devops-engineer",
+] as const;
+
+export interface SyntheticJobFixture {
+  external_id: string;
+  platform: JobPlatform;
+  apply_channel: ApplyChannel;
+  title: string;
+  company: string;
+  location: string;
+  work_mode: WorkMode;
+  salary_min: number | null;
+  salary_max: number | null;
+  url: string;
+  description: string;
+  includeH2?: boolean;
+}
+
+export const SYNTHETIC_JOBS: readonly SyntheticJobFixture[] = [
+  {
+    external_id: "seed-glints-001",
+    platform: "glints",
+    apply_channel: "email",
+    title: "Senior Backend Developer (TypeScript & PostgreSQL)",
+    company: "PT Awan Sintetis Nusantara",
+    location: "Jakarta Selatan",
+    work_mode: "hybrid",
+    salary_min: 16_000_000,
+    salary_max: 24_000_000,
+    url: "https://glints.example.com/jobs/seed-glints-001",
+    description:
+      "Membangun layanan API berskala tinggi dengan TypeScript, Node.js, dan PostgreSQL. Kirim CV terbaru Anda ke careers@awan-sintetis.example.com dengan subjek Backend.",
+    includeH2: true,
+  },
+  {
+    external_id: "seed-jobstreet-002",
+    platform: "jobstreet",
+    apply_channel: "easy_apply",
+    title: "Backend Developer (Go / Node.js)",
+    company: "PT Logistik Fiktif Indonesia",
+    location: "Bandung",
+    work_mode: "hybrid",
+    salary_min: 14_000_000,
+    salary_max: 19_000_000,
+    url: "https://jobstreet.example.com/jobs/seed-jobstreet-002",
+    description:
+      "Merancang sistem pelacakan pengiriman dan queue berbasis PostgreSQL serta Docker. Pengalaman optimasi query sangat diutamakan.",
+    includeH2: true,
+  },
+  {
+    external_id: "seed-linkedin-003",
+    platform: "linkedin",
+    apply_channel: "easy_apply",
+    title: "Fullstack Developer (Next.js & TypeScript)",
+    company: "Studio Produk Contoh",
+    location: "Remote Indonesia",
+    work_mode: "remote",
+    salary_min: 15_000_000,
+    salary_max: 21_000_000,
+    url: "https://linkedin.example.com/jobs/seed-linkedin-003",
+    description:
+      "Mengembangkan aplikasi web Next.js App Router, Tailwind CSS, dan backend PostgreSQL untuk tim internal.",
+  },
+  {
+    external_id: "seed-glints-004",
+    platform: "glints",
+    apply_channel: "email",
+    title: "DevOps Engineer (Docker & Linux)",
+    company: "PT Infrastruktur Contoh",
+    location: "Jakarta Pusat",
+    work_mode: "onsite",
+    salary_min: 15_000_000,
+    salary_max: 22_000_000,
+    url: "https://glints.example.com/jobs/seed-glints-004",
+    description:
+      "Mengelola container Docker, reverse proxy Caddy, dan otomasi backup terenkripsi. Hubungi talent@infrastruktur-contoh.example.com.",
+  },
+  {
+    external_id: "seed-manual-005",
+    platform: "manual",
+    apply_channel: "email",
+    title: "Backend API Engineer",
+    company: "PT FinTek Simulasi",
+    location: "Jakarta Selatan",
+    work_mode: "hybrid",
+    salary_min: 17_000_000,
+    salary_max: 23_000_000,
+    url: "https://karir.fintek-simulasi.example.com/backend-api",
+    description:
+      "Bertanggung jawab pada reliability endpoint checkout dan antrean transaksi asinkron. Lamaran dapat dikirim ke recruitment@fintek-simulasi.example.com.",
+  },
+  {
+    external_id: "seed-jobstreet-006",
+    platform: "jobstreet",
+    apply_channel: "portal",
+    title: "Fullstack Software Engineer",
+    company: "PT Edukasi Digital Fiktif",
+    location: "Yogyakarta",
+    work_mode: "remote",
+    salary_min: 12_000_000,
+    salary_max: 17_000_000,
+    url: "https://jobstreet.example.com/jobs/seed-jobstreet-006",
+    description:
+      "Membangun platform pembelajaran interaktif memakai React, TypeScript, dan Postgres.",
+  },
+  {
+    external_id: "seed-glints-007",
+    platform: "glints",
+    apply_channel: "link",
+    title: "Platform & Backend Engineer",
+    company: "PT Ritel Awan Contoh",
+    location: "Surabaya",
+    work_mode: "onsite",
+    salary_min: 13_000_000,
+    salary_max: 18_000_000,
+    url: "https://glints.example.com/jobs/seed-glints-007",
+    description:
+      "Mengembangkan integrasi inventori dan API layanan mitra dengan Go dan PostgreSQL.",
+  },
+  {
+    external_id: "seed-linkedin-008",
+    platform: "linkedin",
+    apply_channel: "link",
+    title: "UI/UX Designer",
+    company: "Agensi Desain Contoh",
+    location: "Jakarta",
+    work_mode: "hybrid",
+    salary_min: 10_000_000,
+    salary_max: 14_000_000,
+    url: "https://linkedin.example.com/jobs/seed-linkedin-008",
+    description:
+      "Merancang sistem desain Figma, riset pengguna, dan prototipe interaktif produk web.",
+  },
+  {
+    external_id: "seed-jobstreet-009",
+    platform: "jobstreet",
+    apply_channel: "portal",
+    title: "Finance & Accounting Analyst",
+    company: "PT Niaga Sejahtera Fiktif",
+    location: "Jakarta Barat",
+    work_mode: "onsite",
+    salary_min: 9_000_000,
+    salary_max: 13_000_000,
+    url: "https://jobstreet.example.com/jobs/seed-jobstreet-009",
+    description:
+      "Menyusun laporan keuangan bulanan, rekonsiliasi pajak, dan kontrol anggaran operasional.",
+  },
+];

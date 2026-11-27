@@ -42,6 +42,19 @@ export default async function OnboardingPage() {
       <CvAssistantSection initialConsent={consentStatus} initialUploadedCvs={uploadedCvs} />
 
       <ProfileEditor initialBundle={bundle} mode="wizard" />
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-white px-5 py-4 text-sm">
+        <div>
+          <p className="font-semibold text-ink">Langkah lanjutan: Atur Minat & Platform</p>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            Setelah data diri selesai, pilih role incaran dan platform lowongan agar dashboard
+            tersaring otomatis.
+          </p>
+        </div>
+        <Link href="/settings" className="btn-secondary">
+          Buka Preferensi →
+        </Link>
+      </div>
     </div>
   );
 }

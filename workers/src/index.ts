@@ -1,14 +1,11 @@
 /**
  * Entry point worker Lamar Kerja AI.
  *
- * Phase 1 hanya membutuhkan satu job: `cv.parse` (M3). Worker berjalan sebagai
- * proses terpisah yang polling tabel `cv_parse_runs` di Supabase memakai secret
- * key, jadi tidak butuh koneksi `DATABASE_URL` langsung.
- *
- * Jalankan dari root repo:
- *   pnpm --filter @lamarkerja/workers dev
- * atau dari folder `workers`:
- *   pnpm dev
+ * Menjalankan polling terhadap tabel antrean di Supabase memakai secret key:
+ * - `cv.cleanup` (retensi 30 hari / consent dicabut)
+ * - `runner.plan` (rencana pencarian harian guest scraping)
+ * - `jobs.ingest` (normalisasi, dedupe, snapshot, deteksi channel)
+ * - `cv.parse` (ekstraksi CV opsional via Ollama qwen3:4b)
  */
 
 import path from "node:path";
@@ -18,13 +15,17 @@ import { CircuitBreaker } from "./circuit-breaker";
 import { cleanupExpiredCvs } from "./cleanup";
 import { readConfig, type WorkerConfig } from "./config";
 import { loadEnvFile } from "./env-file";
+import { claimIngestBatch, processIngestBatch, type IngestDeps } from "./ingest";
 import { createOllamaClient, type OllamaClient } from "./ollama";
 import { claimRun, processRun, skipAllPendingRuns, type ParseDeps } from "./parse";
+import { ensureDailyRunnerPlan } from "./plan";
 import { createWorkerSupabase, type WorkerSupabase } from "./supabase";
 
 export const JOBS = [
   { name: "cv.parse", pollIntervalMs: 5_000 },
   { name: "cv.cleanup", pollIntervalMs: 3_600_000 },
+  { name: "runner.plan", pollIntervalMs: 900_000 },
+  { name: "jobs.ingest", pollIntervalMs: 5_000 },
 ] as const;
 
 export interface WorkerRuntime {
@@ -33,6 +34,7 @@ export interface WorkerRuntime {
   ollama: OllamaClient;
   breaker: CircuitBreaker;
   lastCleanupAt: number;
+  lastPlanAt: number;
 }
 
 export function createRuntime(config: WorkerConfig): WorkerRuntime {
@@ -47,6 +49,7 @@ export function createRuntime(config: WorkerConfig): WorkerRuntime {
     }),
     breaker: new CircuitBreaker(),
     lastCleanupAt: 0,
+    lastPlanAt: 0,
   };
 }
 
@@ -70,7 +73,27 @@ export async function runOnce(runtime: WorkerRuntime): Promise<boolean> {
     });
   }
 
-  const deps: ParseDeps = {
+  if (nowMs - runtime.lastPlanAt >= runtime.config.planIntervalMs) {
+    runtime.lastPlanAt = nowMs;
+    await ensureDailyRunnerPlan({
+      supabase: runtime.supabase,
+      log,
+    });
+  }
+
+  let didWork = false;
+  const ingestDeps: IngestDeps = {
+    supabase: runtime.supabase,
+    maxAttempts: runtime.config.maxAttempts,
+    log,
+  };
+  const ingestBatch = await claimIngestBatch(ingestDeps);
+  if (ingestBatch) {
+    await processIngestBatch(ingestDeps, ingestBatch);
+    didWork = true;
+  }
+
+  const parseDeps: ParseDeps = {
     supabase: runtime.supabase,
     ollama: runtime.ollama,
     breaker: runtime.breaker,
@@ -79,22 +102,22 @@ export async function runOnce(runtime: WorkerRuntime): Promise<boolean> {
   };
 
   if (!runtime.config.aiEnabled) {
-    const skipped = await skipAllPendingRuns(deps);
+    const skipped = await skipAllPendingRuns(parseDeps);
     if (skipped > 0) log("worker.ai_disabled_skipped", { skipped });
-    return false;
+    return didWork;
   }
 
   if (!runtime.breaker.canAttempt()) {
     const waitMs = runtime.breaker.remainingCooldownMs();
     log("worker.circuit_open", { waitMs });
     await sleep(Math.min(waitMs, 30_000));
-    return false;
+    return didWork;
   }
 
-  const run = await claimRun(deps);
-  if (!run) return false;
+  const run = await claimRun(parseDeps);
+  if (!run) return didWork;
 
-  await processRun(deps, run);
+  await processRun(parseDeps, run);
   return true;
 }
 
@@ -125,8 +148,6 @@ export async function main(): Promise<void> {
   process.on("SIGINT", () => stop("SIGINT"));
   process.on("SIGTERM", () => stop("SIGTERM"));
 
-  // `WORKER_ONCE=true` menjalankan satu iterasi lalu keluar. Berguna untuk
-  // pengujian manual dan cron drain, tanpa mengubah perilaku default.
   const runOnceMode = process.env.WORKER_ONCE === "true";
 
   while (!stopping) {

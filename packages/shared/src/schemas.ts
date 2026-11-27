@@ -27,7 +27,7 @@ export const ONBOARDING_STEPS = [
 export const onboardingStepSchema = z.enum(ONBOARDING_STEPS);
 export type OnboardingStep = z.infer<typeof onboardingStepSchema>;
 
-function emptyToNull(value: unknown): unknown {
+export function emptyToNull(value: unknown): unknown {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" && value.trim() === "") return null;
   return value;
@@ -83,7 +83,7 @@ export function nullableNumber(min: number, max: number, integer = false) {
   }, numberSchema.min(min).max(max).nullable());
 }
 
-function nullableEnum<const T extends readonly [string, ...string[]]>(values: T) {
+export function nullableEnum<const T extends readonly [string, ...string[]]>(values: T) {
   return z.preprocess(emptyToNull, z.enum(values).nullable());
 }
 

@@ -5,6 +5,7 @@ import {
   experienceSchema,
   identitySchema,
   languageSchema,
+  manualJobInputSchema,
   skillSchema,
 } from "@lamarkerja/shared";
 
@@ -13,6 +14,7 @@ import {
   SYNTHETIC_CV_TEXT,
   SYNTHETIC_EDUCATIONS,
   SYNTHETIC_EXPERIENCES,
+  SYNTHETIC_JOBS,
   SYNTHETIC_LANGUAGES,
   SYNTHETIC_PENDING_SUGGESTIONS,
   SYNTHETIC_PROFILE,
@@ -45,6 +47,29 @@ describe("fixtures sintetis", () => {
     const normalized = normalizeForGrounding(SYNTHETIC_CV_TEXT);
     for (const item of SYNTHETIC_PENDING_SUGGESTIONS) {
       expect(isGroundedSnippet(item.source_snippet, normalized)).toBe(true);
+    }
+  });
+
+  it("fixture lowongan Phase 2 valid dan memakai domain contoh", () => {
+    expect(SYNTHETIC_JOBS.length).toBeGreaterThanOrEqual(8);
+    for (const job of SYNTHETIC_JOBS) {
+      expect(job.url).toContain("example.com");
+      expect(() =>
+        manualJobInputSchema.parse({
+          mode: "url",
+          url: job.url,
+          platform: job.platform,
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          work_mode: job.work_mode,
+          salary_min: job.salary_min,
+          salary_max: job.salary_max,
+          description: job.description,
+          posted_at: null,
+          hr_email: null,
+        }),
+      ).not.toThrow();
     }
   });
 });

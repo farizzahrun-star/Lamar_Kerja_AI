@@ -11,6 +11,7 @@ export interface WorkerConfig {
   maxAttempts: number;
   cvStorageDir: string;
   cleanupIntervalMs: number;
+  planIntervalMs: number;
 }
 
 function readInt(
@@ -56,5 +57,6 @@ export function readConfig(source: NodeJS.ProcessEnv = process.env): WorkerConfi
     maxAttempts: readInt(source, "WORKER_MAX_ATTEMPTS", 2, { min: 1, max: 5 }),
     cvStorageDir: (source.CV_STORAGE_DIR ?? "./data/cv").trim() || "./data/cv",
     cleanupIntervalMs: readInt(source, "WORKER_CLEANUP_INTERVAL_MS", 3_600_000, { min: 1_000 }),
+    planIntervalMs: readInt(source, "WORKER_PLAN_INTERVAL_MS", 900_000, { min: 5_000 }),
   };
 }

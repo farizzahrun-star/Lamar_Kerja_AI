@@ -6,7 +6,7 @@ yang bisa dicentang.
 
 **Legenda:** `[ ]` belum · `[x]` selesai · `[!]` terblokir (lihat catatan)
 
-**Status saat ini:** Batch 2 dimulai — M3 bagian **Consent** selesai, lanjut ke **Upload CV**, **Worker `cv.parse`**, **Review**, dan **Fallback**.
+**Status saat ini:** Phase 1 (M0–M4) tuntas · Phase 2 (M2.1 Local Runner & Ingest + M2.2 Minat & Dashboard) selesai diimplementasikan — menunggu penerapan SQL `0002` & `0003` ke Supabase serta uji live `pnpm db:seed` & `pnpm runner:daily`.
 
 ---
 
@@ -168,25 +168,25 @@ mengunduh CV PDF tanpa bergantung pada AI.
 ## Phase 2 — Scraping Guest & Pemilihan Lowongan
 
 ### M2.1 — Local Runner & Ingest
-- [ ] `apps/runner`: bootstrap, config, token runner
-- [ ] Endpoint `/api/runner/tasks`, `/api/runner/jobs`, `/api/runner/tasks/:id/result`
-- [ ] Worker `runner.plan` + `jobs.ingest` (normalisasi, dedupe, snapshot)
-- [ ] Adapter Playwright guest: Glints
-- [ ] Adapter Playwright guest: Jobstreet
-- [ ] Adapter Playwright guest: LinkedIn (halaman publik)
-- [ ] Fixture test per adapter
-- [ ] Kuota 10/platform/hari + jeda acak + deteksi blokir
-- [ ] `collector_runs` + halaman status runner
-- [ ] Deteksi `apply_channel` + ekstraksi email HR
-- [ ] Cadangan manual: URL, teks, CSV
+- [x] `apps/runner`: bootstrap, config, token runner
+- [x] Endpoint `/api/runner/tasks`, `/api/runner/jobs`, `/api/runner/tasks/:id/result`
+- [x] Worker `runner.plan` + `jobs.ingest` (normalisasi, dedupe, snapshot)
+- [x] Adapter Playwright guest: Glints
+- [x] Adapter Playwright guest: Jobstreet
+- [x] Adapter Playwright guest: LinkedIn (halaman publik)
+- [x] Fixture test per adapter
+- [x] Kuota 10/platform/hari + jeda acak + deteksi blokir
+- [x] `collector_runs` + halaman status runner
+- [x] Deteksi `apply_channel` + ekstraksi email HR
+- [x] Cadangan manual: URL, teks, CSV
 
 ### M2.2 — Minat & Dashboard
-- [ ] Master `interests`, `user_interests`, `user_platforms`
-- [ ] API & halaman jobs (list, filter, detail)
-- [ ] Banner snapshot H-1 + fallback
-- [ ] Status per platform
-- [ ] `POST /api/applications` (status `queued`)
-- [ ] Batas harian antrean + pencegahan lamaran ganda
+- [x] Master `interests`, `user_interests`, `user_platforms` (plus `user_settings`, migrasi `0002_phase2_schema.sql`)
+- [x] API & halaman jobs (list, filter, detail)
+- [x] Banner snapshot H-1 + fallback
+- [x] Status per platform
+- [x] `POST /api/applications` (status `queued`)
+- [x] Batas harian antrean + pencegahan lamaran ganda
 
 ---
 
@@ -294,3 +294,5 @@ mengunduh CV PDF tanpa bergantung pada AI.
 | 2026-11-16 | M3 (Worker `cv.parse`) | Worker TypeScript (`workers/src`) dengan loader `.env`, klien Supabase secret key, loop polling `cv_parse_runs` + klaim optimistis (`status= pending` + `attempts`), klien Ollama (`think:false`, JSON Schema via `format`, timeout 180s, parse JSON berpagar kode), prompt versioned `2026-11-16.v1` per bagian, validasi zod + repair 1×, grounding `source_snippet` (buang saran halusinasi), simpan `cv_parse_suggestions` idempoten, cek ulang consent sebelum proses (`CONSENT_REVOKED`/`CONSENT_OUTDATED`), skip `NO_EXTRACTABLE_TEXT`/`CV_EXPIRED`, retry `WORKER_MAX_ATTEMPTS` lalu `failed`, circuit breaker 3 gagal/5 menit → jeda 10 menit, dan `WORKER_ONCE=true` untuk uji satu iterasi. Verifikasi: 80 unit test hijau + smoke test nyata terhadap Ollama lokal untuk 4 bagian (identity 6, experiences 2, educations 1, skills 5 saran, semua `parsed`). |
 | 2026-11-16 | M3 (Review & Fallback) | `planMerges` (`apps/web/src/lib/cv/merge.ts`) untuk normalisasi URL, patch identitas, insert pengalaman/pendidikan/skill, dan dedupe case-insensitive terhadap profil maupun batch yang sama; loader `loadCvReviewData` + `countPendingSuggestions`; endpoint `POST /api/cv/review/decisions` (accept/reject, update status via admin client, `audit_log` `cv.suggestion.accepted`/`rejected`); halaman `/profile/cv/review` dengan diff per field, skor confidence, `source_snippet`, terima/tolak per field, per bagian, dan semua, serta peringatan fallback ketika run `failed`/`skipped`; banner saran pending di `/profile/cv` dan tautan dari `CvUploadCard`. Verifikasi: 88 unit test + Playwright e2e (`check-m3-review.mjs`) memastikan reject per field, accept-all, dedupe, dan audit log. |
 | 2026-11-16 | M4 (Cleanup & Hardening) | Worker `cv.cleanup` (`workers/src/cleanup.ts`) yang menghapus berkas & baris `uploaded_cvs` lewat `delete_after` (retensi 30 hari / consent dicabut) dengan guard `resolveSafeCvPath` dan audit log `cv.cleanup`; rate limit unggah CV per user 1 jam bergulir (`evaluateUploadRateLimit`, `CV_UPLOAD_MAX_PER_HOUR`, `429 RATE_LIMITED` + `Retry-After`); fixture & seed kandidat sintetis idempoten (`pnpm db:seed` → `workers/src/seed.ts`, `demo.kandidat@lamarkerja.local`); sinkronisasi `.env.example`, `docs/setup.md`, `docs/architecture.md`, `docs/team-onboarding.md`, dan `README.md`. Verifikasi: 97 unit test hijau, `typecheck` & `lint` bersih, serta e2e `check-m4.mjs` selesai (Phase 1 tuntas). |
+| 2026-11-27 | Phase 2 (Website M2.2 + Cadangan Manual + Status Runner) | Migration `migrations/0002_phase2_schema.sql` & tipe `packages/db/src/types.ts`; shared normalizer, SHA-256 `raw_hash`, kanonikal URL, ekstraksi email HR, deteksi `apply_channel`, parser CSV, tanggal WIB, evaluator alert runner (`@lamarkerja/shared`); Route Handlers `/api/preferences*`, `/api/jobs*` (feed H-1 + fallback, manual URL/teks, import CSV), `/api/applications*` (batch atomik, kuota harian WIB, cegah duplikat non-`cancelled`, batal `queued`, `tracking_events`), `/api/runners*` (status `collector_runs`, token SHA-256, kill switch `job_sources.enabled`); UI sidebar + `/dashboard`, `/jobs`, `/jobs/[id]`, `/applications`, `/settings`, `/runner`, tautan lanjutan `/onboarding`; perluasan `pnpm db:seed` sintetis Phase 2. Verifikasi: `eslint`, `typecheck` 4 package, 124/124 unit test (25 file), dan `next build` (36/36 halaman) hijau. Menunggu apply SQL `0002_phase2_schema.sql` ke Supabase untuk uji live `db:seed` & browser. |
+| 2026-11-27 | Phase 2 (M2.1 Local Runner & Ingest) | Migration `migrations/0003_phase2_runner_ingest.sql` (`runner_tasks`, `job_ingest_batches`) & tipe `@lamarkerja/db`; kontrak & helper bersama di `@lamarkerja/shared` (`runner-contracts.ts`, `job-ingest.ts`, `buildDailySearchPlan`, `prepareNormalizedJob`); endpoint token-auth `/api/runner/tasks`, `/api/runner/jobs`, `/api/runner/tasks/[id]/result` + update `middleware.ts`; worker `runner.plan` (`workers/src/plan.ts`) & `jobs.ingest` (`workers/src/ingest.ts`) berjalan independen dari `AI_ENABLED`; package baru `apps/runner` (`@lamarkerja/runner`) dengan guest browser (`profile-guest`), kuota 10/platform/hari, jeda acak 20–45s, fingerprint skipper, retensi HTML debug 7 hari, dan 3 adapter deterministik Playwright (Glints, Jobstreet, LinkedIn) beserta fixture HTML tersimpan; script root `runner:dev` & `runner:daily`, `.gitignore` `browser-profiles/`, dan `.env.example`. Verifikasi: `eslint`, `typecheck` 5 package, 148/148 unit test (33 file), dan `next build` (38/38 halaman) hijau. Menunggu apply SQL `0002` & `0003` ke Supabase serta `playwright install chromium` untuk uji live. |

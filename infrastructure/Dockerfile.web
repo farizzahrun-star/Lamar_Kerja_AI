@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:22-bookworm-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@10.20.0 --activate
+WORKDIR /app
+
+FROM base AS deps
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/db/package.json ./packages/db/package.json
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/runner/package.json ./apps/runner/package.json
+COPY workers/package.json ./workers/package.json
+RUN pnpm install --frozen-lockfile --filter @lamarkerja/web...
+
+FROM deps AS builder
+COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY packages/db ./packages/db
+COPY packages/shared ./packages/shared
+COPY apps/web ./apps/web
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_OUTPUT=standalone
+# Placeholder aman khusus saat `next build` (override oleh `.env` di runtime).
+ENV SUPABASE_URL="https://build-placeholder.supabase.co"
+ENV SUPABASE_PUBLISHABLE_KEY="build-placeholder-key"
+
+RUN pnpm --filter @lamarkerja/web build
+
+FROM node:22-bookworm-slim AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
+
+RUN mkdir -p /data/cv /data/resumes && chown -R node:node /data
+
+COPY --from=builder --chown=node:node /app/apps/web/.next/standalone ./
+COPY --from=builder --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
+
+USER node
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "apps/web/server.js"]

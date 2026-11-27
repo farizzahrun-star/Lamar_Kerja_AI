@@ -46,8 +46,9 @@ pnpm dev
 ```
 
 Aplikasi berjalan di `http://localhost:3000`. Ollama hanya dibutuhkan untuk
-parsing CV (M3); `infrastructure/docker-compose.yml` belum ada, jadi untuk
-sekarang jalankan Ollama lokal (`ollama serve`) lalu `ollama pull qwen3:4b`.
+parsing CV (M3); untuk pengembangan lokal jalankan Ollama (`ollama serve`)
+lalu `ollama pull qwen3:4b`, atau gunakan `infrastructure/docker-compose.yml`
+untuk deployment VM produksi.
 
 ### Supabase
 
